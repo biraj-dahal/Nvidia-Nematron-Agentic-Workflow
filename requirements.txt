@@ -1,0 +1,18 @@
+# Core dependencies for multi-agent workflow
+langgraph>=0.2.0
+langchain>=0.2.0
+langchain-nvidia-ai-endpoints>=0.2.0
+langchain-community>=0.2.0
+python-dotenv>=1.0.0
+
+# For calendar functionality
+google-api-python-client>=2.100.0
+google-auth-httplib2>=0.1.1
+google-auth-oauthlib>=1.1.0
+
+# For vector storage and RAG
+chromadb>=0.4.15
+sentence-transformers>=2.2.2
+
+# Utilities
+pydantic>=2.0.0
