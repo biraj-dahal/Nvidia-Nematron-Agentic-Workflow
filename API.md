@@ -160,7 +160,7 @@ Summarize a conversation.
 **Parameters:**
 - `messages`: List of conversation messages
 
-#### `summarize_meeting_notes(notes: str) -> Dict[str, any]`
+#### `summarize_meeting_notes(notes: str) -> Dict[str, Any]`
 
 Create structured summary of meeting notes.
 
