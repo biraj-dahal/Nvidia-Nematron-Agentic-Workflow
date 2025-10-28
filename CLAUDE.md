@@ -6,6 +6,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is an AI-powered meeting assistant that uses NVIDIA Nemotron LLM and LangGraph to orchestrate multi-agent workflows. The system analyzes meeting transcripts, manages calendar events, finds related meetings, and automatically sends HTML-formatted email summaries with timezone support.
 
+**Frontend**: React 19 + TypeScript + Material-UI (MUI)
+**Backend**: Flask + LangGraph + NVIDIA Nemotron
+**Architecture**: Separate frontend (port 3000) and backend (port 5000) with SSE streaming
+
 ## Recent Enhancements
 
 The system now includes:
@@ -17,6 +21,105 @@ The system now includes:
 - **HTML Email Formatting**: Professional gradient-styled email summaries with responsive design
 - **Improved JSON Parsing**: Handles LLM `<think>` blocks and balanced bracket counting
 - **Two-Phase Execution**: FIND_SLOT actions execute first, then CREATE_EVENT can use discovered slots
+
+## React Frontend Architecture (New!)
+
+The frontend has been completely migrated from vanilla HTML/CSS/JS to **React 19 + TypeScript + Material-UI**:
+
+### Project Structure
+
+```
+frontend/
+├── src/
+│   ├── theme/
+│   │   └── nvidiaTheme.ts              # MUI theme with NVIDIA green (#76B900)
+│   ├── types/
+│   │   └── workflow.ts                 # All TypeScript interfaces & types
+│   ├── hooks/
+│   │   ├── useMediaRecorder.ts         # Audio recording logic
+│   │   ├── useWorkflowStream.ts        # SSE connection for live events
+│   │   ├── useOrchestrator.ts          # API calls to backend
+│   │   └── index.ts                    # Barrel exports
+│   ├── context/
+│   │   └── WorkflowContext.tsx         # Global workflow state management
+│   ├── components/
+│   │   ├── Recording/
+│   │   │   ├── RecordingControls.tsx   # Start/Stop buttons
+│   │   │   ├── AudioPlayer.tsx         # Playback component
+│   │   │   ├── TranscriptionDisplay.tsx# Transcript display
+│   │   │   └── index.ts
+│   │   ├── Workflow/
+│   │   │   ├── TimelineBar.tsx         # 9-agent timeline with progress
+│   │   │   ├── AgentCard.tsx           # Expandable agent status card
+│   │   │   ├── WorkflowVisualization.tsx # Main workflow container
+│   │   │   └── index.ts
+│   │   └── Results/
+│   │       ├── ActionCards.tsx         # Grid of planned actions
+│   │       ├── ExecutionResults.tsx    # Execution result list
+│   │       ├── Summary.tsx             # Meeting summary display
+│   │       ├── ApprovalButtons.tsx     # Approve/Cancel buttons
+│   │       └── index.ts
+│   ├── App.tsx                         # Main app component
+│   └── index.tsx                       # Providers & theme setup
+└── package.json                        # Proxy: http://localhost:5000
+```
+
+### Key Technologies
+
+- **React 19**: Latest React with automatic batching
+- **TypeScript**: Full type safety across all components
+- **Material-UI (v7)**: Professional component library with dark theme
+- **Axios**: HTTP client for API requests
+- **Emotion**: CSS-in-JS for styled components
+- **Server-Sent Events (SSE)**: Real-time workflow updates
+
+### Custom Hooks
+
+**useMediaRecorder** - Audio recording
+```typescript
+const { recordingState, startRecording, stopRecording, resetRecording } = useMediaRecorder();
+```
+
+**useWorkflowStream** - Real-time SSE updates
+```typescript
+const { isConnected, startStream, closeStream, error } = useWorkflowStream(onEvent);
+```
+
+**useOrchestrator** - Backend API integration
+```typescript
+const { isLoading, error, result, transcribeAudio, runOrchestrator } = useOrchestrator();
+```
+
+### State Management
+
+**WorkflowContext** provides global state:
+```typescript
+workflow: {
+  isRunning: boolean;
+  currentAgent: string | null;
+  completedAgents: string[];
+  agentCards: AgentCardState[];
+  progress: number; // 0-100
+}
+```
+
+### Theme
+
+Uses NVIDIA-themed Material-UI with:
+- Primary: `#76B900` (NVIDIA Green)
+- Dark Background: `#000000`
+- Card Background: `#1a1a1a`
+- Full dark mode support with custom component overrides
+
+### Running the Frontend
+
+```bash
+cd frontend
+npm install
+npm start
+```
+
+Runs on `http://localhost:3000` with proxy to backend on `http://localhost:5000`
 
 ## Real-Time Workflow Visualization
 
