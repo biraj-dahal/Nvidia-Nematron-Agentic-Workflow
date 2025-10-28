@@ -6,169 +6,81 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is an AI-powered meeting assistant that uses NVIDIA Nemotron LLM and LangGraph to orchestrate multi-agent workflows. The system analyzes meeting transcripts, manages calendar events, finds related meetings, and automatically sends HTML-formatted email summaries with timezone support.
 
-**Frontend**: React 19 + TypeScript + Material-UI (MUI)
-**Backend**: Flask + LangGraph + NVIDIA Nemotron
-**Architecture**: Separate frontend (port 3000) and backend (port 5000) with SSE streaming
+**Frontend**: React 19 + TypeScript + Material-UI (MUI) on port 3000
+**Backend**: Flask + LangGraph + NVIDIA Nemotron on port 5000
+**Architecture**: Separate frontend/backend with Server-Sent Events (SSE) streaming
 
-## Recent Enhancements
+## Development Commands
 
-The system now includes:
+### Backend
+```bash
+# Start Flask server (handles /transcribe endpoint + SSE streaming)
+python server.py
 
-- **EST/EDT Timezone Support**: All calendar operations use `pytz` with `America/New_York` timezone (auto-handles DST)
-- **Smart Duration Detection**: Extracts meeting duration from natural language ("30-minute standup", "2-hour session", "half hour")
-- **Natural Date Parsing**: Converts relative dates to ISO format ("tomorrow", "next week", "next Tuesday")
-- **Automatic Attendee Invitations**: Maps names to emails via `ATTENDEE_MAP` and sends calendar invites
-- **HTML Email Formatting**: Professional gradient-styled email summaries with responsive design
-- **Improved JSON Parsing**: Handles LLM `<think>` blocks and balanced bracket counting
-- **Two-Phase Execution**: FIND_SLOT actions execute first, then CREATE_EVENT can use discovered slots
+# Run main orchestrator workflow with test transcript
+python orchestrator_agent.py
 
-## React Frontend Architecture (New!)
-
-The frontend has been completely migrated from vanilla HTML/CSS/JS to **React 19 + TypeScript + Material-UI**:
-
-### Project Structure
-
-```
-frontend/
-├── src/
-│   ├── theme/
-│   │   └── nvidiaTheme.ts              # MUI theme with NVIDIA green (#76B900)
-│   ├── types/
-│   │   └── workflow.ts                 # All TypeScript interfaces & types
-│   ├── hooks/
-│   │   ├── useMediaRecorder.ts         # Audio recording logic
-│   │   ├── useWorkflowStream.ts        # SSE connection for live events
-│   │   ├── useOrchestrator.ts          # API calls to backend
-│   │   └── index.ts                    # Barrel exports
-│   ├── context/
-│   │   └── WorkflowContext.tsx         # Global workflow state management
-│   ├── components/
-│   │   ├── Recording/
-│   │   │   ├── RecordingControls.tsx   # Start/Stop buttons
-│   │   │   ├── AudioPlayer.tsx         # Playback component
-│   │   │   ├── TranscriptionDisplay.tsx# Transcript display
-│   │   │   └── index.ts
-│   │   ├── Workflow/
-│   │   │   ├── TimelineBar.tsx         # 9-agent timeline with progress
-│   │   │   ├── AgentCard.tsx           # Expandable agent status card
-│   │   │   ├── WorkflowVisualization.tsx # Main workflow container
-│   │   │   └── index.ts
-│   │   └── Results/
-│   │       ├── ActionCards.tsx         # Grid of planned actions
-│   │       ├── ExecutionResults.tsx    # Execution result list
-│   │       ├── Summary.tsx             # Meeting summary display
-│   │       ├── ApprovalButtons.tsx     # Approve/Cancel buttons
-│   │       └── index.ts
-│   ├── App.tsx                         # Main app component
-│   └── index.tsx                       # Providers & theme setup
-└── package.json                        # Proxy: http://localhost:5000
+# Test Google Calendar integration
+python calender_tool.py
 ```
 
-### Key Technologies
-
-- **React 19**: Latest React with automatic batching
-- **TypeScript**: Full type safety across all components
-- **Material-UI (v7)**: Professional component library with dark theme
-- **Axios**: HTTP client for API requests
-- **Emotion**: CSS-in-JS for styled components
-- **Server-Sent Events (SSE)**: Real-time workflow updates
-
-### Custom Hooks
-
-**useMediaRecorder** - Audio recording
-```typescript
-const { recordingState, startRecording, stopRecording, resetRecording } = useMediaRecorder();
-```
-
-**useWorkflowStream** - Real-time SSE updates
-```typescript
-const { isConnected, startStream, closeStream, error } = useWorkflowStream(onEvent);
-```
-
-**useOrchestrator** - Backend API integration
-```typescript
-const { isLoading, error, result, transcribeAudio, runOrchestrator } = useOrchestrator();
-```
-
-### State Management
-
-**WorkflowContext** provides global state:
-```typescript
-workflow: {
-  isRunning: boolean;
-  currentAgent: string | null;
-  completedAgents: string[];
-  agentCards: AgentCardState[];
-  progress: number; // 0-100
-}
-```
-
-### Theme
-
-Uses NVIDIA-themed Material-UI with:
-- Primary: `#76B900` (NVIDIA Green)
-- Dark Background: `#000000`
-- Card Background: `#1a1a1a`
-- Full dark mode support with custom component overrides
-
-### Running the Frontend
-
+### Frontend
 ```bash
 cd frontend
-npm install
+
+# Start development server (port 3000, proxies to localhost:5000)
 npm start
+
+# Run Jest tests in watch mode
+npm test
+
+# Build for production
+npm run build
 ```
 
-Runs on `http://localhost:3000` with proxy to backend on `http://localhost:5000`
+## Environment Configuration
+
+### Setup Required Files
+
+1. **`.env` file** (or export variables):
+   ```bash
+   export API_KEY="your_nvidia_api_key"
+   export NEMOTRON_MODEL="nvidia/llama-3.3-nemotron-super-49b-v1.5"
+   ```
+   See `.env.example` for all available configuration options.
+
+2. **Google OAuth credentials**:
+   - Place OAuth client secret as `client_secret_*.apps.googleusercontent.com.json` in project root
+   - First run auto-generates `token.pickle` after authentication
+   - If auth fails, delete `token.pickle` and re-run to re-authenticate
+
+3. **Attendee mapping** (`attendee_mapping.json`):
+   - Maps names to email addresses for calendar invites
+   - Add new attendees to the `attendees` array
+   - Supports fuzzy matching via `fuzzy_match_threshold` (default: 0.8)
+
+## Frontend Architecture
+
+The frontend is built with **React 19 + TypeScript + Material-UI** and structured as:
+
+- **`src/theme/`** - NVIDIA green theme (#76B900) with Material-UI overrides
+- **`src/types/`** - TypeScript interfaces for workflow state and components
+- **`src/hooks/`** - Custom hooks (`useMediaRecorder`, `useWorkflowStream`, `useOrchestrator`)
+- **`src/context/`** - Global `WorkflowContext` for state management
+- **`src/components/`** - React components organized by feature (Recording, Workflow, Results)
+
+**Key libraries**: Axios (HTTP), Emotion (CSS-in-JS), Material-UI (components), Server-Sent Events (real-time updates)
 
 ## Real-Time Workflow Visualization
 
-The system now features inline, ChatGPT-style workflow visualization that shows live progress as agents execute:
+The frontend displays live workflow progress via Server-Sent Events (SSE):
 
-### Key Features
+- **Timeline Bar**: Shows all 9 agents (pending/active/completed) with progress percentage
+- **Expandable Agent Cards**: Real-time status updates with auto-collapse on completion
+- **SSE Streaming**: Backend emits `stage_start` and `stage_complete` events to `/stream-workflow` endpoint
+- **NVIDIA Theme**: Green (#76B900) animations with pulsing active agent indicator
 
-1. **Timeline Bar** - Shows all 9 agents with status indicators:
-   - Pending (gray)
-   - Active (green with pulsing glow animation)
-   - Completed (green checkmark)
-   - Progress bar fills as stages complete
-
-2. **Expandable Agent Cards** - Click to expand/collapse:
-   - Agent name and current status description
-   - Real-time streaming updates as agent works
-   - Status badge (Active/Completed/Error)
-   - Auto-collapses when stage completes
-   - Smooth animations for expand/collapse
-
-3. **Real-Time Streaming** - Uses Server-Sent Events (SSE):
-   - Backend emits `stage_start` and `stage_complete` events
-   - Frontend receives updates in real-time
-   - No polling, efficient one-way communication
-   - Auto-scrolls to active agent for visibility
-
-### Technical Implementation
-
-**Backend (server.py)**:
-- `/stream-workflow` endpoint: SSE stream for workflow events
-- `broadcast_workflow_event()`: Sends events to all connected clients
-- Thread-safe queue management for multiple clients
-
-**Orchestrator (orchestrator_agent.py)**:
-- `emit_workflow_event()`: Emits stage_start/stage_complete events
-- Event callback system: Events flow from orchestrator to frontend
-- All 9 agents (nodes) emit events at start and completion
-
-**Frontend (script.js)**:
-- `startWorkflowStream()`: Initiates SSE connection
-- `handleWorkflowEvent()`: Processes incoming events
-- `createAgentCard()`: Dynamically builds expandable card UI
-- `updateTimeline()`: Updates timeline progress bar
-
-**Styling (styles.css)**:
-- NVIDIA green theme with animations
-- Pulsing active agent indicator
-- Smooth transitions and hover effects
-- Custom scrollbar for event log
+**Technical**: `orchestrator_agent.py` emits workflow events → `server.py` broadcasts via SSE → React hooks (`useWorkflowStream`) update UI in real-time
 
 ## Architecture
 
@@ -211,27 +123,18 @@ The workflow is defined in `orchestrator_agent.py` using the `StateGraph` patter
   - Calls NVIDIA ASR (transcribe_file.py from python-clients)
   - Requires `API_KEY` environment variable
 
-### Web UI & Recording
+### Web Interface
 
-The repository includes a web interface for recording and transcribing meetings:
+The frontend (`frontend/` React app) provides:
+- Audio recording and playback controls
+- Real-time workflow visualization with SSE updates
+- Meeting transcript display
+- Action approval/cancellation interface
 
-- **index.html** - Recording interface ("Core 4.0" app)
-- **script.js** - Client-side audio recording and upload logic
-- **styles.css** - NVIDIA-themed styling
-- **server.py** - Flask backend with `/transcribe` endpoint
-
-To run the web UI:
-```bash
-# Set NVIDIA API key
-export API_KEY=your_nvidia_api_key
-
-# Start Flask server
-python server.py
-
-# Open http://localhost:5000 in browser
-```
-
-Requirements: ffmpeg must be installed and in PATH for audio conversion.
+Backend API endpoints:
+- `POST /transcribe` - Accepts audio files, returns transcript
+- `POST /run-orchestrator` - Triggers workflow execution
+- `GET /stream-workflow` - SSE stream for real-time agent updates
 
 ### NVIDIA Nemotron Integration
 
@@ -242,43 +145,11 @@ The orchestrator uses NVIDIA Nemotron (`nvidia/llama-3.3-nemotron-super-49b-v1.5
 
 **IMPORTANT**: API keys are currently hardcoded in source files. These should be moved to environment variables.
 
-## Running the Application
+## Installation Prerequisites
 
-### Prerequisites
-
-1. **Install Dependencies**:
-   ```bash
-   pip install openai langgraph langchain-core google-api-python-client google-auth google-auth-oauthlib pydantic pytz python-dateutil flask flask-cors
-   ```
-
-2. **Google OAuth Setup**:
-   - Place OAuth client secret file: `client_secret_175568546829-c0dm1uj4mhr0k36vb1t12qp6hgmst5hb.apps.googleusercontent.com.json` in project root
-   - On first run, authenticate to create `token.pickle`
-   - **Required scopes**:
-     - `https://www.googleapis.com/auth/calendar`
-     - `https://www.googleapis.com/auth/gmail.send`
-   - If you encounter a 403 error, delete `token.pickle` and re-authenticate
-
-3. **NVIDIA API Key**:
-   - Currently hardcoded in `orchestrator_agent.py:41` - should be replaced with environment variable
-   - For Flask server, set as `API_KEY` environment variable
-
-### Execute Main Workflow
-
-```bash
-python orchestrator_agent.py
-```
-
-This runs the sample workflow with a hardcoded transcript. Modify the `sample_transcript` in the `main()` function to test with different meeting content.
-
-### Test Individual Tools
-
-```bash
-# Test calendar tool independently
-python calender_tool.py
-
-# The email and summarizer tools don't have standalone test modes
-```
+1. **Backend Dependencies**: `pip install -r requirements.txt` (installs all Python packages)
+2. **Frontend Dependencies**: `cd frontend && npm install` (installs React/TypeScript packages)
+3. **System Requirements**: FFmpeg installed and in PATH (for audio processing)
 
 ## State Management
 
@@ -340,6 +211,100 @@ The LLM extracts duration from patterns like:
 - "quick 15-minute sync" → 15
 - Default: 60 minutes if not specified
 
+## Multi-Action Planning (NEW!)
+
+### Overview
+
+The action planner now intelligually generates **multiple distinct actions** when a transcript mentions multiple scheduling requests or action items. This is critical for the hackathon demo where a single meeting might discuss 3-5 different follow-up items.
+
+### How It Works
+
+1. **Extract Analysis Data**: The `analyze_transcript` node extracts structured `action_items` from the full transcript
+2. **Pass to Planner**: The `plan_actions` node receives:
+   - Full transcript (2000 characters, up from 800)
+   - Explicit `action_items` array
+   - `mentioned_dates` array
+   - `participants` array
+   - Key topics
+3. **Generate Multiple Actions**: The LLM is prompted with explicit instructions:
+   ```
+   ⚠️ CRITICAL INSTRUCTION: GENERATE MULTIPLE ACTIONS FOR MULTIPLE REQUESTS
+   - If the transcript contains MULTIPLE distinct meetings, events, or tasks:
+     - Create a SEPARATE action for EACH distinct item
+     - Do NOT consolidate multiple scheduling requests into a single action
+   ```
+4. **Return Array**: Returns an array with one action per distinct item
+
+### Example
+
+**Input Transcript** (695 characters):
+```
+We need to organize several meetings for next week.
+
+First, I need to schedule a 30-minute standup with Rahual on Monday afternoon at 2 PM to discuss the project status.
+
+Second, let's set up a 2-hour planning session with Kritika on Wednesday morning to go over the Q4 roadmap and budget strategy.
+
+Third, we should schedule an all-hands meeting with the entire team (Rahual, Kritika, and Biraj) on Friday at 3 PM for a 60-minute project update.
+
+Also, I think we should add a note to yesterday's Project Phoenix meeting about the budget approval we discussed there.
+
+Finally, could we find some available time slots next week in the morning hours for a potential sync with the finance team?
+```
+
+**Output: 5 Planned Actions**
+1. **CREATE_EVENT** - Project Status Standup (Rahual, 30min, Nov 3)
+2. **CREATE_EVENT** - Q4 Roadmap Planning (Kritika, 120min, Nov 5)
+3. **CREATE_EVENT** - All-Hands Project Update (Rahual/Kritika/Biraj, 60min, Nov 7)
+4. **ADD_NOTES** - Budget approval note to Phoenix meeting
+5. **FIND_SLOT** - Available morning slots for finance sync
+
+### Key Improvements (October 2025)
+
+1. **Increased Context Window**: Transcript sent to LLM increased from 800 to 2000 characters
+2. **Structured Action Items**: Extracted action_items passed explicitly to planner
+3. **Enhanced Prompt**: Clear multi-action instruction at top of system prompt
+4. **Better Logging**: Detailed logs show how many actions were planned and their details
+
+### Debugging Multi-Action Issues
+
+If you're not seeing multiple actions generated:
+
+1. **Check extracted action_items**: Look for logs in plan_actions step
+   ```
+   INFO:orchestrator_agent:PLAN_ACTIONS CONTEXT:
+   INFO:orchestrator_agent:  Action items count: 5
+   INFO:orchestrator_agent:  Action items: [...]
+   ```
+
+2. **Check LLM response**: The raw actions response should contain array with multiple items
+   ```
+   INFO:orchestrator_agent:Raw actions response from Nemotron:
+   [
+       {"action_type": "CREATE_EVENT", ...},
+       {"action_type": "CREATE_EVENT", ...},
+       ...
+   ]
+   ```
+
+3. **Check parsed actions**: Final count should match analysis
+   ```
+   INFO:orchestrator_agent:✓ Planned 5 actions:
+     Action 1: ActionType.CREATE_EVENT
+     Action 2: ActionType.CREATE_EVENT
+     ...
+   ```
+
+### Testing Multi-Action Planning
+
+Use this test script to verify multi-action behavior:
+
+```bash
+python /tmp/test_multi_action.py
+```
+
+Expected output: 5 actions for the test transcript above.
+
 ## Email Recipients & Attendee Mapping
 
 ### Email Recipients
@@ -373,62 +338,17 @@ CALEN_ID = '1e48c44c1ad2d312b31ee14323a2fc98c71147e7d43450be5210b88638c75384@gro
 
 Update this to use a different calendar.
 
-## Testing the Inline Workflow Visualization
+## Testing
 
-To see the real-time workflow visualization in action:
+To debug the real-time workflow visualization:
+- Start backend: `python server.py` (port 5000)
+- Start frontend: `cd frontend && npm start` (port 3000)
+- Open DevTools Network tab → look for `/stream-workflow` connection (EventStream, `text/event-stream` MIME type)
+- Watch XHR messages for `stage_start` and `stage_complete` events
 
-1. **Start the Flask server**:
-   ```bash
-   python server.py
-   ```
+To test with a custom transcript, edit the `sample_transcript` in `orchestrator_agent.py:main()` and run `python orchestrator_agent.py`.
 
-2. **Open the web interface**:
-   ```
-   http://localhost:3000
-   ```
-
-3. **Record a meeting or paste a transcript**:
-   - Click "Start Recording" to capture audio
-   - OR manually provide transcript via the API
-
-4. **Watch the visualization**:
-   - The timeline bar appears showing all 9 agents
-   - As each agent executes, it becomes highlighted in green with pulsing animation
-   - Agent cards appear below showing real-time status
-   - Click any card to expand and see full details
-   - Progress bar fills as agents complete
-   - When agent finishes, card auto-collapses and turns completed (solid green)
-
-5. **Monitor SSE Connection**:
-   - Open browser DevTools → Network tab
-   - Look for `/stream-workflow` connection
-   - Should show as EventStream with `text/event-stream` MIME type
-   - Watch XHR messages for `stage_start` and `stage_complete` events
-
-## Common Development Commands
-
-### Run the Main Orchestrator
-```bash
-python orchestrator_agent.py
-```
-This executes a sample workflow with hardcoded transcript. Modify `sample_transcript` in `main()` to test different content.
-
-### Test Calendar Tool
-```bash
-python calender_tool.py
-```
-Tests Google Calendar API integration independently.
-
-### Run the Web UI & Recording
-```bash
-# Set NVIDIA API key
-export API_KEY=your_nvidia_api_key
-
-# Start Flask server (runs on http://localhost:5000)
-python server.py
-```
-
-### Test ASR Transcription (Python-Clients)
+For ASR transcription testing:
 ```bash
 cd python-clients/scripts/asr
 python transcribe_file.py --input_file /path/to/audio.wav
@@ -496,11 +416,9 @@ Modify `fuzzy_match_threshold` in `attendee_mapping.json` to adjust matching sen
 - **translate.py** - Transcript analysis utilities (imported as needed)
 
 ### Frontend & Server
-- **server.py** - Flask app serving `index.html` and handling `/transcribe` endpoint
-- **index.html** - Main UI for audio recording and workflow execution
-- **workflow_viewer.html** - Separate visualization interface (displays workflow graph in real-time)
-- **script.js** - Client-side audio recording and upload logic
-- **styles.css** - NVIDIA-themed styling applied to both interfaces
+- **server.py** - Flask app serving `/transcribe` and `/stream-workflow` endpoints
+- **frontend/src/App.tsx** - Main React app component
+- **frontend/src/context/WorkflowContext.tsx** - Global workflow state management
 
 ### External Dependencies
 - **python-clients/** - NVIDIA Riva ASR client library (submodule containing gRPC clients)

@@ -51,8 +51,8 @@ const ExecutionResults: React.FC<ExecutionResultsProps> = ({ results }) => {
         !lowerResult.includes('not found')
       );
     }
-    // For structured results, check status or success field
-    return result.status === 'success' || result.success === true;
+    // For structured results, check status field
+    return result.status === 'success';
   };
 
   /**
@@ -67,7 +67,7 @@ const ExecutionResults: React.FC<ExecutionResultsProps> = ({ results }) => {
         lowerResult.includes('not found')
       );
     }
-    return result.status === 'error' || result.success === false;
+    return result.status === 'error';
   };
 
   /**
@@ -169,7 +169,7 @@ const ExecutionResults: React.FC<ExecutionResultsProps> = ({ results }) => {
                   </Typography>
                 }
                 secondary={
-                  typeof result !== 'string' && result.details ? (
+                  typeof result !== 'string' && result.technical_details ? (
                     <Typography
                       variant="caption"
                       sx={{
@@ -179,7 +179,7 @@ const ExecutionResults: React.FC<ExecutionResultsProps> = ({ results }) => {
                         fontStyle: 'italic',
                       }}
                     >
-                      {result.details}
+                      {result.technical_details}
                     </Typography>
                   ) : null
                 }
@@ -211,7 +211,7 @@ const ExecutionResults: React.FC<ExecutionResultsProps> = ({ results }) => {
       >
         <Box sx={{ textAlign: 'center' }}>
           <Typography variant="h4" sx={{ color: '#76B900', fontWeight: 'bold' }}>
-            {results.filter(isSuccessResult).length}
+            {(results as Array<ExecutionResult | string>).filter(isSuccessResult).length}
           </Typography>
           <Typography variant="caption" color="text.secondary">
             Successful
@@ -219,7 +219,7 @@ const ExecutionResults: React.FC<ExecutionResultsProps> = ({ results }) => {
         </Box>
         <Box sx={{ textAlign: 'center' }}>
           <Typography variant="h4" sx={{ color: '#ef4444', fontWeight: 'bold' }}>
-            {results.filter(isErrorResult).length}
+            {(results as Array<ExecutionResult | string>).filter(isErrorResult).length}
           </Typography>
           <Typography variant="caption" color="text.secondary">
             Failed

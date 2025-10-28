@@ -3,6 +3,7 @@ import { RecordingState } from '../types/workflow';
 
 interface UseMediaRecorderReturn {
   recordingState: RecordingState;
+  audioBlob: Blob | null;
   startRecording: () => Promise<void>;
   stopRecording: () => Promise<void>;
   resetRecording: () => void;
@@ -13,6 +14,7 @@ export const useMediaRecorder = (): UseMediaRecorderReturn => {
     isRecording: false,
     error: undefined,
   });
+  const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -62,8 +64,8 @@ export const useMediaRecorder = (): UseMediaRecorderReturn => {
       mediaRecorder.onstop = () => {
         // Create blob from chunks
         const mimeType = mediaRecorder.mimeType || 'audio/webm';
-        const audioBlob = new Blob(audioChunksRef.current, { type: mimeType });
-        const audioUrl = URL.createObjectURL(audioBlob);
+        const newAudioBlob = new Blob(audioChunksRef.current, { type: mimeType });
+        const audioUrl = URL.createObjectURL(newAudioBlob);
 
         // Stop all tracks
         if (audioStreamRef.current) {
@@ -75,8 +77,9 @@ export const useMediaRecorder = (): UseMediaRecorderReturn => {
           isRecording: false,
           audioUrl,
           mimeType,
-          duration: audioBlob.size,
+          duration: newAudioBlob.size,
         });
+        setAudioBlob(newAudioBlob);
 
         resolve();
       };
@@ -88,6 +91,7 @@ export const useMediaRecorder = (): UseMediaRecorderReturn => {
   const resetRecording = useCallback(() => {
     audioChunksRef.current = [];
     setRecordingState({ isRecording: false });
+    setAudioBlob(null);
     if (recordingState.audioUrl) {
       URL.revokeObjectURL(recordingState.audioUrl);
     }
@@ -95,6 +99,7 @@ export const useMediaRecorder = (): UseMediaRecorderReturn => {
 
   return {
     recordingState,
+    audioBlob,
     startRecording,
     stopRecording,
     resetRecording,

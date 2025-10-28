@@ -3,7 +3,6 @@ import {
   Card,
   CardContent,
   Typography,
-  Grid,
   Chip,
   Box,
   Paper,
@@ -68,9 +67,15 @@ const ActionCards: React.FC<ActionCardsProps> = ({ actions }) => {
   };
 
   return (
-    <Grid container spacing={3}>
+    <Box
+      sx={{
+        display: 'grid',
+        gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr', md: '1fr 1fr 1fr' },
+        gap: 3,
+      }}
+    >
       {actions.map((action, index) => (
-        <Grid item xs={12} sm={6} md={4} key={index} sx={{ minWidth: '300px' }}>
+        <Box key={index}>
           <Card
             sx={{
               height: '100%',
@@ -231,9 +236,9 @@ const ActionCards: React.FC<ActionCardsProps> = ({ actions }) => {
               )}
             </CardContent>
           </Card>
-        </Grid>
+        </Box>
       ))}
-    </Grid>
+    </Box>
   );
 };
 

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Container,
   Box,
@@ -29,15 +29,13 @@ import CssBaseline from '@mui/material/CssBaseline';
 
 // Context and Theme
 import { WorkflowProvider, useWorkflow } from './context/WorkflowContext';
-import nvidiaTheme from './theme/nvidiaTheme';
+import { nvidiaTheme } from './theme/nvidiaTheme';
 
 // Hooks
-import useMediaRecorder from './hooks/useMediaRecorder';
-import useOrchestrator from './hooks/useOrchestrator';
-import useWorkflowStream from './hooks/useWorkflowStream';
+import { useMediaRecorder, useOrchestrator, useWorkflowStream } from './hooks';
 
 // Components
-import WorkflowVisualization from './components/WorkflowVisualization';
+import { WorkflowVisualization } from './components/Workflow';
 import {
   ActionCards,
   ExecutionResults,
@@ -53,7 +51,7 @@ import {
  */
 const AppContent: React.FC = () => {
   // Workflow context
-  const { state: workflowState, dispatch } = useWorkflow();
+  const { workflow: workflowState, startWorkflow, stopWorkflow, handleWorkflowEvent, resetWorkflow } = useWorkflow();
 
   // Local state
   const [showTranscription, setShowTranscription] = useState(false);
@@ -66,35 +64,41 @@ const AppContent: React.FC = () => {
 
   // Custom hooks
   const {
-    isRecording,
+    recordingState,
     audioBlob,
     startRecording,
     stopRecording,
-    error: recordingError,
+    resetRecording,
   } = useMediaRecorder();
 
+  // State for transcript
+  const [transcript, setTranscript] = useState<string>('');
+
   const {
-    transcribe,
-    runOrchestrator,
-    isTranscribing,
-    isProcessing,
-    transcript,
-    orchestratorResult,
+    isLoading: isTranscribing,
     error: orchestratorError,
+    result: orchestratorResult,
+    transcribeAudio,
+    runOrchestrator,
   } = useOrchestrator();
 
-  const { startStream, stopStream } = useWorkflowStream();
+  // Callback for workflow stream events
+  const onWorkflowEvent = useCallback((event: any) => {
+    handleWorkflowEvent(event);
+  }, [handleWorkflowEvent]);
+
+  const { startStream, closeStream: stopStream } = useWorkflowStream(onWorkflowEvent);
 
   // Error handling effect
   useEffect(() => {
-    if (recordingError) {
-      setError(`Recording error: ${recordingError}`);
+    if (recordingState.error) {
+      setError(`Recording error: ${recordingState.error}`);
     } else if (orchestratorError) {
       setError(`Processing error: ${orchestratorError}`);
     } else {
       setError(null);
     }
-  }, [recordingError, orchestratorError]);
+  }, [recordingState.error, orchestratorError]);
 
   /**
    * Handle start recording
@@ -106,7 +110,8 @@ const AppContent: React.FC = () => {
       setStatusMessage('Starting recording...');
 
       // Reset workflow state
-      dispatch({ type: 'RESET_WORKFLOW' });
+      resetWorkflow();
+      startWorkflow();
       setShowTranscription(false);
       setShowWorkflowViz(false);
       setShowResults(false);
@@ -135,32 +140,21 @@ const AppContent: React.FC = () => {
   };
 
   /**
-   * Process audio blob after recording stops
-   * Transcribes audio and runs orchestrator workflow
-   */
-  useEffect(() => {
-    if (audioBlob && !isRecording) {
-      handleTranscription();
-    }
-  }, [audioBlob, isRecording]);
-
-  /**
    * Handle transcription of recorded audio
    */
-  const handleTranscription = async () => {
-    if (!audioBlob) return;
-
+  const handleTranscription = useCallback(async (audioData: Blob) => {
     try {
       setStatusMessage('Transcribing audio...');
       setShowTranscription(true);
 
       // Transcribe audio
-      const transcriptionText = await transcribe(audioBlob);
+      const transcriptionText = await transcribeAudio(audioData);
 
       if (!transcriptionText) {
         throw new Error('Transcription failed or returned empty text');
       }
 
+      setTranscript(transcriptionText);
       setStatusMessage('Transcription complete. Analyzing meeting content...');
 
       // Show workflow visualization
@@ -174,7 +168,17 @@ const AppContent: React.FC = () => {
       setStatusMessage('');
       stopStream();
     }
-  };
+  }, [transcribeAudio, stopStream]);
+
+  /**
+   * Process audio blob after recording stops
+   * Transcribes audio and runs orchestrator workflow
+   */
+  useEffect(() => {
+    if (audioBlob && !recordingState.isRecording) {
+      handleTranscription(audioBlob);
+    }
+  }, [audioBlob, recordingState.isRecording, handleTranscription]);
 
   /**
    * Handle orchestration workflow
@@ -227,7 +231,7 @@ const AppContent: React.FC = () => {
   const handleCancel = () => {
     setStatusMessage('Workflow cancelled.');
     stopStream();
-    dispatch({ type: 'RESET_WORKFLOW' });
+    resetWorkflow();
     setShowResults(false);
   };
 
@@ -284,7 +288,7 @@ const AppContent: React.FC = () => {
                 <Switch
                   checked={autoExecute}
                   onChange={(e) => setAutoExecute(e.target.checked)}
-                  disabled={isRecording || isTranscribing || isProcessing}
+                  disabled={recordingState.isRecording || isTranscribing}
                 />
               }
               label={
@@ -330,26 +334,26 @@ const AppContent: React.FC = () => {
           <Button
             variant="contained"
             size="large"
-            startIcon={isRecording ? <Stop /> : <Mic />}
-            onClick={isRecording ? handleStopRecording : handleStartRecording}
-            disabled={isTranscribing || isProcessing}
+            startIcon={recordingState.isRecording ? <Stop /> : <Mic />}
+            onClick={recordingState.isRecording ? handleStopRecording : handleStartRecording}
+            disabled={isTranscribing}
             sx={{
               px: 6,
               py: 2,
               fontSize: '1.2rem',
               fontWeight: 600,
-              backgroundColor: isRecording ? '#ef4444' : '#76B900',
+              backgroundColor: recordingState.isRecording ? '#ef4444' : '#76B900',
               '&:hover': {
-                backgroundColor: isRecording ? '#dc2626' : '#5a9000',
+                backgroundColor: recordingState.isRecording ? '#dc2626' : '#5a9000',
               },
               transition: 'all 0.3s ease',
             }}
           >
-            {isRecording ? 'Stop Recording' : 'Start Recording'}
+            {recordingState.isRecording ? 'Stop Recording' : 'Start Recording'}
           </Button>
 
           {/* Recording Progress */}
-          {isRecording && (
+          {recordingState.isRecording && (
             <Box sx={{ mt: 3 }}>
               <LinearProgress
                 sx={{
@@ -368,7 +372,7 @@ const AppContent: React.FC = () => {
           )}
 
           {/* Processing Progress */}
-          {(isTranscribing || isProcessing) && (
+          {isTranscribing && (
             <Box sx={{ mt: 3 }}>
               <LinearProgress
                 sx={{
@@ -381,7 +385,7 @@ const AppContent: React.FC = () => {
                 }}
               />
               <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
-                {isTranscribing ? 'Transcribing audio...' : 'Processing with AI...'}
+                Transcribing audio and processing with AI...
               </Typography>
             </Box>
           )}
@@ -426,7 +430,13 @@ const AppContent: React.FC = () => {
         {/* Workflow Visualization */}
         {showWorkflowViz && (
           <Box sx={{ mb: 4 }}>
-            <WorkflowVisualization />
+            <WorkflowVisualization
+              isVisible={showWorkflowViz}
+              activeAgent={workflowState.currentAgent}
+              completedAgents={workflowState.completedAgents}
+              agentCards={workflowState.agentCards}
+              progress={workflowState.progress}
+            />
           </Box>
         )}
 
@@ -461,7 +471,7 @@ const AppContent: React.FC = () => {
                 <ApprovalButtons
                   onApprove={handleApprove}
                   onCancel={handleCancel}
-                  disabled={isProcessing}
+                  disabled={isTranscribing}
                 />
               </Box>
             )}

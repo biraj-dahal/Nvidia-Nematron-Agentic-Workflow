@@ -494,6 +494,13 @@ Which calendar events are related? Return ONLY JSON."""
 
         system_prompt = """You are a meeting action planner. Based on transcript and calendar, decide actions.
 
+⚠️ CRITICAL INSTRUCTION: GENERATE MULTIPLE ACTIONS FOR MULTIPLE REQUESTS
+- If the transcript or extracted action_items list contains MULTIPLE distinct meetings, events, or tasks:
+  - Create a SEPARATE action for EACH distinct item
+  - Do NOT consolidate multiple scheduling requests into a single action
+  - If 3 meetings are mentioned, return an array of 3 CREATE_EVENT actions
+  - The length of your output array should match the number of distinct action items
+
 Actions available:
 - ADD_NOTES: Add notes to existing event
 - CREATE_EVENT: Create new calendar event for FUTURE meetings mentioned in transcript
@@ -505,6 +512,7 @@ RULES:
 2. For past meetings with discussion points → use ADD_NOTES on related events
 3. Use FIND_SLOT only if you need to find available times (system will auto-use first slot for CREATE_EVENT if needed)
 4. Only create events for FUTURE meetings, never for past discussions
+5. MULTI-ACTION RULE: Always generate one action per distinct meeting/item mentioned, never combine multiple meetings into one action
 
 CONVERSATIONAL SCHEDULING PATTERNS:
 These common conversational patterns indicate meeting scheduling:
@@ -624,22 +632,67 @@ If no actions needed, return empty array: []""".format(
             tomorrow_date=tomorrow_str
         )
 
+        # Extract analyzed data from messages (added by analyze_transcript)
+        analysis = None
+        for msg in reversed(state.messages):
+            # Handle both dict and AIMessage/BaseMessage objects
+            content = msg.get("content") if isinstance(msg, dict) else msg.content
+            if content and "Meeting Analysis:" in content:
+                try:
+                    analysis_str = content.split("Meeting Analysis: ")[1].strip()
+                    # Parse the JSON, handling multiple levels of nesting
+                    parsed = json.loads(analysis_str)
+
+                    # Handle nested JSON strings (up to 3 levels deep)
+                    for _ in range(3):
+                        if isinstance(parsed, str):
+                            parsed = json.loads(parsed)
+                        else:
+                            break
+
+                    # Ensure analysis is a dict, not a list
+                    if isinstance(parsed, list) and parsed:
+                        parsed = parsed[0]
+
+                    if isinstance(parsed, dict):
+                        analysis = parsed
+                        break
+                except (IndexError, json.JSONDecodeError, AttributeError, ValueError) as e:
+                    _LOGGER.warning(f"Failed to parse analysis from message: {e}")
+                    pass
+
+        # Build context with analyzed data
         context = {
-            "transcript": state.audio_transcript[:800],
-            "related_meetings": state.related_past_meetings[:3],
+            "transcript": state.audio_transcript[:2000],  # Increased from 800 to 2000 for more context
+            "action_items": analysis.get("action_items", []) if analysis else [],
+            "mentioned_dates": analysis.get("mentioned_dates", []) if analysis else [],
+            "participants": analysis.get("participants", []) if analysis else [],
+            "key_topics": analysis.get("key_topics", []) if analysis else [],
+            "related_meetings": [
+                {"id": m.get("id"), "title": m.get("summary"), "date": m.get("start")}
+                for m in state.related_past_meetings[:3]
+            ],
             "calendar_events": [
-                {"id": e.id, "title": e.summary, "start": e.start} 
+                {"id": e.id, "title": e.summary, "start": e.start}
                 for e in state.calendar_events[:5]
             ]
         }
-        
+
+        # Log the context being sent to the LLM
+        _LOGGER.info(f"PLAN_ACTIONS CONTEXT:")
+        _LOGGER.info(f"  Action items count: {len(context.get('action_items', []))}")
+        _LOGGER.info(f"  Action items: {context.get('action_items', [])}")
+        _LOGGER.info(f"  Participants: {context.get('participants', [])}")
+        _LOGGER.info(f"  Mentioned dates: {context.get('mentioned_dates', [])}")
+        _LOGGER.info(f"  Transcript length: {len(context['transcript'])} chars")
+
         user_prompt = f"""Context:
 {json.dumps(context, indent=2)}
 
 What actions should be taken? Return ONLY JSON."""
-        
+
         response = self._call_nemotron(system_prompt, user_prompt, json_mode=True)
-        _LOGGER.info(f"Raw actions response:\n{response}\n")
+        _LOGGER.info(f"Raw actions response from Nemotron:\n{response}\n")
         
         try:
             json_str = self._extract_json(response)
@@ -671,7 +724,20 @@ What actions should be taken? Return ONLY JSON."""
 
             actions = [MeetingAction(**action) for action in actions_data]
             state.planned_actions = actions
-            _LOGGER.info(f"Planned {len(actions)} actions")
+
+            # Log detailed action information
+            _LOGGER.info(f"✓ Planned {len(actions)} actions:")
+            for i, action in enumerate(actions, 1):
+                _LOGGER.info(f"  Action {i}: {action.action_type}")
+                if action.action_type == "create_event":
+                    _LOGGER.info(f"    Title: {action.event_title}")
+                    _LOGGER.info(f"    Date: {action.event_date}")
+                    _LOGGER.info(f"    Duration: {action.duration_minutes}m")
+                    _LOGGER.info(f"    Attendees: {action.attendees}")
+                elif action.action_type == "add_notes":
+                    _LOGGER.info(f"    Event ID: {action.calendar_event_id}")
+                    _LOGGER.info(f"    Notes: {action.notes[:100]}...")
+
             emit_workflow_event("stage_complete", "Action Planner", {"status": "success"})
             return state
         except (json.JSONDecodeError, Exception) as e:

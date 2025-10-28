@@ -122,6 +122,14 @@ def convert_audio_with_pydub(input_path, output_path):
 def run_nvidia_transcription(filepath):
     """Executes the NVIDIA ASR script using gRPC and captures the transcription."""
 
+    print(f"\n   {'─'*76}")
+    print(f"   NVIDIA TRANSCRIPTION DETAILS")
+    print(f"   {'─'*76}")
+    print(f"   Input file: {filepath}")
+    print(f"   File exists: {os.path.exists(filepath)}")
+    if os.path.exists(filepath):
+        print(f"   File size: {os.path.getsize(filepath)} bytes")
+
     # Construct the command to execute the NVIDIA script with correct parameters
     command = [
         'python', TRANSCRIPTION_SCRIPT_PATH,
@@ -133,47 +141,79 @@ def run_nvidia_transcription(filepath):
         '--input-file', filepath
     ]
 
+    print(f"   Script path: {TRANSCRIPTION_SCRIPT_PATH}")
+    print(f"   Script exists: {os.path.exists(TRANSCRIPTION_SCRIPT_PATH)}")
+    print(f"   Command: {' '.join(command[:3])} ... (API key redacted)")
+
     try:
-        print(f"Running transcription command: {' '.join(command)}")
-        # Execute the script
-        result = subprocess.run(command, check=True, capture_output=True, text=True)
+        print(f"\n   Executing command...")
+        # Execute the script with timeout
+        result = subprocess.run(command, check=True, capture_output=True, text=True, timeout=60)
 
         # Get all output
-        output = result.stdout.strip()
-        print(f"Transcription output:\n{output}")
+        stdout = result.stdout.strip()
+        stderr = result.stderr.strip()
+        print(f"   ✓ Script executed successfully")
+        print(f"   STDOUT length: {len(stdout)} chars")
+        print(f"   STDERR length: {len(stderr)} chars")
+
+        if stderr:
+            print(f"   STDERR preview: {stderr[:200]}")
+        print(f"   STDOUT preview: {stdout[:200]}")
 
         # The transcription text is typically the last line or contains "Transcription:"
-        if "Transcription:" in output:
+        if "Transcription:" in stdout:
             # Extract the text after "Transcription: "
-            for line in output.splitlines():
+            for line in stdout.splitlines():
                 if line.startswith('Transcription:'):
-                    return line.split(':', 1)[1].strip()
+                    result_text = line.split(':', 1)[1].strip()
+                    print(f"   Result found in 'Transcription:' line")
+                    return result_text
 
         # If no "Transcription:" prefix, combine all non-empty lines
         # Remove "##" prefixes that Parakeet adds to intermediate results
         lines = []
-        for line in output.splitlines():
+        for line in stdout.splitlines():
             line = line.strip()
             if line:
                 # Remove "##" prefix from Parakeet intermediate transcriptions
                 if line.startswith('##'):
                     line = line[2:].strip()
-                lines.append(line)
+                if line:  # Only add non-empty lines
+                    lines.append(line)
 
         if lines:
             # Join all lines to get the complete transcript
-            return ' '.join(lines)
+            result_text = ' '.join(lines)
+            print(f"   Result found by combining {len(lines)} lines")
+            return result_text
 
+        print(f"   ⚠ No transcription text found in output")
         return "ASR script executed, but no transcription text was found in the output."
 
+    except subprocess.TimeoutExpired:
+        err_msg = f"ASR Error: Transcription script timed out (>60s)"
+        print(f"   ✗ {err_msg}")
+        return err_msg
+
     except subprocess.CalledProcessError as e:
-        print(f"NVIDIA Script Error: {e.stderr}")
-        return f"ASR Error: Failed to run NVIDIA transcription script. {e.stderr}"
+        err_msg = f"ASR Error: Script failed with exit code {e.returncode}. STDERR: {e.stderr[:200]}"
+        print(f"   ✗ {err_msg}")
+        return err_msg
+
+    except FileNotFoundError as e:
+        err_msg = f"ASR Error: Script file not found: {TRANSCRIPTION_SCRIPT_PATH}"
+        print(f"   ✗ {err_msg}")
+        return err_msg
+
     except Exception as e:
-        print(f"Unexpected ASR Error: {e}")
+        err_msg = f"ASR Error: An unexpected error occurred. {type(e).__name__}: {str(e)}"
+        print(f"   ✗ {err_msg}")
         import traceback
         traceback.print_exc()
-        return f"ASR Error: An unexpected error occurred. {e}"
+        return err_msg
+    finally:
+        print(f"   {'─'*76}\n")
 
 
 @app.route('/stream-workflow', methods=['GET'])
@@ -225,56 +265,90 @@ def transcribe():
     uploaded_path = None
 
     try:
+        print(f"\n{'='*80}")
+        print("TRANSCRIBE REQUEST RECEIVED")
+        print(f"{'='*80}")
+
         if 'audioFile' not in request.files:
+            print("ERROR: No audioFile in request.files")
+            print(f"Available files: {request.files.keys()}")
             return jsonify({"error": "No audio file provided"}), 400
 
         audio_file = request.files['audioFile']
+        print(f"1. File received: {audio_file.filename} (type: {audio_file.content_type})")
+
         filename = secure_filename(audio_file.filename)
         uploaded_path = os.path.join(temp_dir, filename)
 
         # 1. Save the uploaded file
-        print(f"Saving uploaded audio file: {filename}")
+        print(f"2. Saving to: {uploaded_path}")
         audio_file.save(uploaded_path)
+
+        if not os.path.exists(uploaded_path):
+            raise RuntimeError(f"File failed to save: {uploaded_path}")
+
+        file_size = os.path.getsize(uploaded_path)
+        print(f"   ✓ File saved successfully ({file_size} bytes)")
 
         # 2. Convert to required format (mono, 16kHz) with fallback
         converted_path = uploaded_path
         converted_path_target = os.path.join(temp_dir, TEMP_WAV_FILE)
 
         # Try FFmpeg first
-        print("Attempting FFmpeg conversion...")
+        print(f"3. Attempting FFmpeg conversion...")
+        print(f"   Input: {uploaded_path}")
+        print(f"   Output: {converted_path_target}")
+
         if convert_to_nvidia_format(uploaded_path, converted_path_target):
             converted_path = converted_path_target
-            print("✓ FFmpeg conversion successful")
+            print(f"   ✓ FFmpeg conversion successful")
         else:
             # Fallback to pydub
-            print("FFmpeg conversion failed. Attempting pydub conversion...")
+            print(f"   ✗ FFmpeg conversion failed. Attempting pydub conversion...")
             if convert_audio_with_pydub(uploaded_path, converted_path_target):
                 converted_path = converted_path_target
-                print("✓ Pydub conversion successful")
+                print(f"   ✓ Pydub conversion successful")
             else:
-                print("⚠ All conversions failed. Attempting direct transcription with original file...")
+                print(f"   ⚠ All conversions failed. Attempting direct transcription with original file...")
                 # Continue with original file as last resort
 
+        if not os.path.exists(converted_path):
+            raise RuntimeError(f"Converted audio file not found: {converted_path}")
+
+        converted_size = os.path.getsize(converted_path)
+        print(f"   Converted file size: {converted_size} bytes")
+
         # 3. Run NVIDIA ASR with converted audio
-        print(f"Starting NVIDIA ASR transcription...")
+        print(f"4. Starting NVIDIA ASR transcription...")
+        print(f"   Script path: {TRANSCRIPTION_SCRIPT_PATH}")
+        print(f"   Audio file: {converted_path}")
         transcription_result = run_nvidia_transcription(converted_path)
+        print(f"   Transcription result: {transcription_result[:100]}...")
 
         # 4. Return the result
         if transcription_result.startswith("ASR Error"):
+            print(f"ERROR: {transcription_result}")
             return jsonify({"error": transcription_result}), 500
 
+        print(f"SUCCESS: Transcription completed")
+        print(f"{'='*80}\n")
         return jsonify({"transcription": transcription_result}), 200
 
     except Exception as e:
-        print(f"Server-side error: {e}")
+        print(f"\n{'='*80}")
+        print(f"EXCEPTION in /transcribe: {type(e).__name__}: {str(e)}")
+        print(f"{'='*80}")
         import traceback
         traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
+        print(f"{'='*80}\n")
+        return jsonify({"error": str(e), "type": type(e).__name__}), 500
 
     finally:
         # 5. Clean up the temporary folder and all its contents
+        print(f"5. Cleaning up temporary directory: {temp_dir}")
         if os.path.exists(temp_dir):
             shutil.rmtree(temp_dir)
+            print(f"   ✓ Cleanup complete")
 
 
 @app.route('/orchestrate', methods=['POST'])
@@ -330,5 +404,5 @@ def orchestrate():
 
 
 if __name__ == '__main__':
-    print(f"Starting ASR Backend Server on http://localhost:5000. Ensure ffmpeg is installed and API_KEY is set.")
-    app.run(port=5000, debug=True)
+    print(f"Starting ASR Backend Server on http://localhost:4000. Ensure ffmpeg is installed and API_KEY is set.")
+    app.run(host='127.0.0.1', port=4000, debug=True, use_reloader=False)
