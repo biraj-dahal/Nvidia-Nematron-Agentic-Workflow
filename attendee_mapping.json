@@ -1,0 +1,35 @@
+{
+  "attendees": [
+    {
+      "primary_name": "rahual",
+      "email": "rahual.rai@bison.howard.edu",
+      "aliases": ["Rahual", "RAHUAL", "rahual rai", "Rahual Rai", "rai"],
+      "first_name": "Rahual",
+      "last_name": "Rai"
+    },
+    {
+      "primary_name": "kritika",
+      "email": "kritika.pant@bison.howard.edu",
+      "aliases": ["Kritika", "KRITIKA", "kritika pant", "Kritika Pant", "pant"],
+      "first_name": "Kritika",
+      "last_name": "Pant"
+    },
+    {
+      "primary_name": "biraj",
+      "email": "biraj.dahal@bison.howard.edu",
+      "aliases": ["Biraj", "BIRAJ", "biraj dahal", "Biraj Dahal", "dahal"],
+      "first_name": "Biraj",
+      "last_name": "Dahal"
+    },
+    {
+      "primary_name": "prada",
+      "email": "prada@example.com",
+      "aliases": ["Prada", "PRADA"],
+      "first_name": "Prada",
+      "last_name": ""
+    }
+  ],
+  "default_domain": "example.com",
+  "fuzzy_match_threshold": 0.8,
+  "notes": "If a name is not found via exact or fuzzy matching, generate email as firstname.lastname@default_domain or firstname@default_domain if no last name"
+}

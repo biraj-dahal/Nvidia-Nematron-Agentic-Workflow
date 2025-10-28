@@ -11,6 +11,7 @@ from typing import Annotated, Any, Sequence, Optional, List, Dict
 from enum import Enum
 import pytz
 from dateutil import parser as dateparser
+from difflib import SequenceMatcher
 
 from openai import OpenAI
 from langchain_core.runnables import RunnableConfig
@@ -21,11 +22,85 @@ from pydantic import BaseModel, Field
 # Timezone configuration - Auto-handles EST/EDT
 TIMEZONE = pytz.timezone('America/New_York')
 
-# Attendee email mapping
+# Load attendee mapping from file
+def load_attendee_mapping():
+    """Load attendee mapping from attendee_mapping.json"""
+    try:
+        with open('attendee_mapping.json', 'r') as f:
+            mapping_data = json.load(f)
+            return mapping_data
+    except FileNotFoundError:
+        # Fallback to hardcoded mapping if file not found
+        print("attendee_mapping.json not found, using hardcoded mapping")
+        return {
+            "attendees": [
+                {"primary_name": "rahual", "email": "rahual.rai@bison.howard.edu", "aliases": ["Rahual", "rahual rai"]},
+                {"primary_name": "kritika", "email": "kritika.pant@bison.howard.edu", "aliases": ["Kritika", "kritika pant"]},
+                {"primary_name": "biraj", "email": "biraj.dahal@bison.howard.edu", "aliases": ["Biraj", "biraj dahal"]}
+            ],
+            "default_domain": "example.com"
+        }
+
+# Load mapping at module initialization
+_ATTENDEE_MAPPING = load_attendee_mapping()
+
+def fuzzy_match_name(name: str, threshold: float = 0.8) -> Optional[Dict[str, Any]]:
+    """
+    Find attendee by fuzzy matching name against aliases
+    Returns the attendee record if found, None otherwise
+    """
+    if not name:
+        return None
+
+    name_lower = name.lower().strip()
+
+    # First try exact match
+    for attendee in _ATTENDEE_MAPPING.get("attendees", []):
+        if name_lower == attendee.get("primary_name", "").lower():
+            return attendee
+
+        # Check aliases
+        for alias in attendee.get("aliases", []):
+            if name_lower == alias.lower():
+                return attendee
+
+    # Then try fuzzy matching on aliases
+    for attendee in _ATTENDEE_MAPPING.get("attendees", []):
+        for alias in attendee.get("aliases", []):
+            similarity = SequenceMatcher(None, name_lower, alias.lower()).ratio()
+            if similarity >= threshold:
+                _LOGGER.info(f"Fuzzy matched '{name}' to '{alias}' (score: {similarity})")
+                return attendee
+
+    # Generate email if no match found
+    parts = name_lower.split()
+    if len(parts) >= 2:
+        generated_email = f"{parts[0]}.{parts[-1]}@{_ATTENDEE_MAPPING.get('default_domain', 'example.com')}"
+    else:
+        generated_email = f"{parts[0]}@{_ATTENDEE_MAPPING.get('default_domain', 'example.com')}"
+
+    _LOGGER.info(f"No attendee match for '{name}', auto-generated email: {generated_email}")
+    return {
+        "primary_name": name_lower,
+        "email": generated_email,
+        "aliases": [name],
+        "first_name": parts[0] if parts else name,
+        "last_name": parts[-1] if len(parts) > 1 else ""
+    }
+
+def get_attendee_emails(attendee_names: List[str]) -> List[str]:
+    """Convert list of attendee names to email addresses"""
+    emails = []
+    for name in attendee_names:
+        attendee = fuzzy_match_name(name)
+        if attendee and attendee.get("email"):
+            emails.append(attendee["email"])
+    return emails
+
+# Legacy ATTENDEE_MAP for backward compatibility
 ATTENDEE_MAP = {
-    "rahual": "rahual.rai@bison.howard.edu",
-    "kritika": "kritika.pant@bison.howard.edu",
-    "biraj": "biraj.dahal@bison.howard.edu"
+    attendee.get("primary_name"): attendee.get("email")
+    for attendee in _ATTENDEE_MAPPING.get("attendees", [])
 }
 
 # Import your existing calendar tool
@@ -70,6 +145,7 @@ class OrchestratorState(BaseModel):
     planned_actions: List[MeetingAction] = []
     execution_results: List[str] = []
     messages: Annotated[Sequence[Any], add_messages] = []
+    auto_execute: bool = True  # If False, skip execution phase for manual approval
 
 
 class MeetingOrchestrator:
@@ -183,21 +259,30 @@ class MeetingOrchestrator:
     async def analyze_transcript(self, state: OrchestratorState, config: RunnableConfig):
         """Analyze the transcript to understand meeting context"""
         _LOGGER.info("Analyzing transcript for meeting context...")
-        
+
         system_prompt = """You are an expert meeting analyst. Extract key information from meeting transcripts.
+
+AUDIO TRANSCRIPTION CONTEXT:
+- Transcripts may contain filler words: "um", "uh", "like", "you know" - ignore these
+- Conversations may have false starts and corrections - interpret the final intent
+- Overlapping speech and informal language should be interpreted charitably
+- "Let me know about", "let's discuss" can indicate scheduling intent
+- "Hey [name]" at the start often indicates mentioning someone as a potential attendee
+
+IMPORTANT: Extract actual DATES from mentions like "november seventh", "next week monday" etc. even if informal.
 
 Respond ONLY with valid JSON in exactly this format (no other text):
 {
     "meeting_title": "string",
-    "is_past_meeting": true,
+    "is_past_meeting": false,
     "mentioned_dates": ["2025-10-30"],
     "participants": ["John", "Sarah"],
     "key_topics": ["Q4 roadmap", "budget"],
     "action_items": ["John: prepare specs", "Sarah: budget analysis"],
-    "summary": "Brief summary of the meeting"
+    "summary": "Brief summary of the meeting (normalize grammar)"
 }"""
-        
-        user_prompt = f"Analyze this meeting transcript and return ONLY JSON:\n\n{state.audio_transcript}"
+
+        user_prompt = f"Analyze this meeting transcript and return ONLY JSON (remove filler words, extract dates and names clearly):\n\n{state.audio_transcript}"
         
         response = self._call_nemotron(system_prompt, user_prompt, json_mode=True)
         _LOGGER.info(f"Raw response from Nemotron:\n{response}\n")
@@ -334,6 +419,15 @@ RULES:
 3. Use FIND_SLOT only if you need to find available times (system will auto-use first slot for CREATE_EVENT if needed)
 4. Only create events for FUTURE meetings, never for past discussions
 
+CONVERSATIONAL SCHEDULING PATTERNS:
+These common conversational patterns indicate meeting scheduling:
+- "Hey [name] next week on [date]" → SCHEDULING INTENT: Create meeting with [name] on [date]
+- "let's [do/meet] [time description]" → SCHEDULING INTENT: Create meeting at specified time
+- "let's do [time]" → SCHEDULING INTENT: Confirm time and create meeting
+- "[name] next [day/week/date]" → SCHEDULING INTENT: Create meeting with [name] at that time
+- "schedule [item]" → SCHEDULING INTENT: Create meeting for that item
+- "discuss [topic] [time reference]" → If future time, CREATE_EVENT, else ADD_NOTES
+
 DURATION DETECTION:
 Extract meeting duration from transcript using these patterns:
 - "30-minute meeting" / "30 minute meeting" → 30
@@ -394,7 +488,20 @@ Example 2 - Create future meeting with duration and attendees:
     }}
 ]
 
-Example 3 - Short meeting with team:
+Example 3 - Informal scheduling pattern (Hey [name] next week on [date]):
+[
+    {{
+        "action_type": "CREATE_EVENT",
+        "event_title": "Financials Discussion",
+        "event_date": "2025-11-07",
+        "duration_minutes": 45,
+        "attendees": ["prada"],
+        "notes": "Discuss organization financials",
+        "reasoning": "Transcript mentions 'hey prada next week on november seventh... to discuss our organization financials' - this is scheduling intent with implied attendee and date"
+    }}
+]
+
+Example 4 - Short meeting with team:
 [
     {{
         "action_type": "CREATE_EVENT",
@@ -407,7 +514,7 @@ Example 3 - Short meeting with team:
     }}
 ]
 
-Example 4 - Both actions:
+Example 5 - Both actions:
 [
     {{
         "action_type": "ADD_NOTES",
@@ -488,6 +595,12 @@ What actions should be taken? Return ONLY JSON."""
     async def execute_actions(self, state: OrchestratorState, config: RunnableConfig):
         """Execute the planned actions in two phases: FIND_SLOT first, then others"""
         _LOGGER.info("Executing planned actions...")
+
+        # Skip execution if auto_execute is False (manual approval required)
+        if not state.auto_execute:
+            _LOGGER.info("Auto-execute disabled - skipping action execution (awaiting manual approval)")
+            state.execution_results = ["Actions planned but not executed - awaiting user approval"]
+            return state
 
         results = []
         available_slots = []
@@ -591,17 +704,12 @@ What actions should be taken? Return ONLY JSON."""
                             results.append(f"Cannot create event '{action.event_title}': No available slots found")
                             continue
 
-                # Map attendee names to email addresses
+                # Map attendee names to email addresses using fuzzy matching
                 attendee_emails = None
                 if action.attendees:
-                    attendee_emails = []
-                    for name in action.attendees:
-                        name_lower = name.lower()
-                        if name_lower in ATTENDEE_MAP:
-                            attendee_emails.append(ATTENDEE_MAP[name_lower])
-                            _LOGGER.info(f"Mapped attendee '{name}' to {ATTENDEE_MAP[name_lower]}")
-                        else:
-                            _LOGGER.warning(f"Unknown attendee name: {name}")
+                    # Use the new fuzzy matching function
+                    attendee_emails = get_attendee_emails(action.attendees)
+                    _LOGGER.info(f"Mapped {len(action.attendees)} attendees to {len(attendee_emails)} emails")
 
                 event_id = self.calendar_tool.create_event(
                     title=action.event_title or "New Meeting",
@@ -775,6 +883,69 @@ def create_orchestrator_graph():
     workflow.add_edge("generate_summary", END)
     
     return workflow.compile()
+
+
+# Helper function for Flask integration
+async def run_orchestrator(transcript: str, auto_execute: bool = True) -> dict:
+    """
+    Run the orchestrator workflow and return serializable results
+
+    Args:
+        transcript: Meeting transcript text
+        auto_execute: If True, execute actions; if False, return planned actions only
+
+    Returns:
+        Dictionary with planned_actions, execution_results, and summary
+    """
+    _LOGGER.info(f"Running orchestrator (auto_execute={auto_execute})...")
+
+    # Create the graph
+    graph = create_orchestrator_graph()
+
+    # Initialize state
+    initial_state = OrchestratorState(
+        audio_transcript=transcript,
+        auto_execute=auto_execute
+    )
+
+    # Run the orchestrator
+    result = await graph.ainvoke(initial_state)
+
+    # Extract summary from messages
+    summary = ""
+    if result.get('messages'):
+        last_message = result['messages'][-1]
+        if isinstance(last_message, dict):
+            summary = last_message.get('content', '')
+        else:
+            summary = getattr(last_message, 'content', '')
+        # Extract just the summary part (after "Summary:\n")
+        if "Summary:\n" in summary:
+            summary = summary.split("Summary:\n", 1)[1].strip()
+
+    # Serialize results
+    serialized_results = {
+        "planned_actions": [
+            {
+                "action_type": action.action_type.value,
+                "calendar_event_id": action.calendar_event_id,
+                "event_title": action.event_title,
+                "event_date": action.event_date,
+                "duration_minutes": action.duration_minutes,
+                "attendees": action.attendees,
+                "notes": action.notes,
+                "reasoning": action.reasoning
+            }
+            for action in result['planned_actions']
+        ],
+        "execution_results": result['execution_results'],
+        "summary": summary,
+        "calendar_events_count": len(result['calendar_events']),
+        "related_meetings_count": len(result['related_past_meetings'])
+    }
+
+    _LOGGER.info(f"Orchestrator completed: {len(result['planned_actions'])} actions planned")
+    return serialized_results
 
 
 # Example usage

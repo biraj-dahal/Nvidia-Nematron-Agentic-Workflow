@@ -4,7 +4,9 @@
       "Bash(python -c:*)",
       "Bash(python orchestrator_agent.py:*)",
       "Bash(timeout:*)",
-      "Bash(python calender_tool.py:*)"
+      "Bash(python calender_tool.py:*)",
+      "Bash(pip install:*)",
+      "Bash(API_KEY=\"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\" python:*)"
     ],
     "deny": [],
     "ask": []
