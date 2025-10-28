@@ -408,3 +408,324 @@ body {
     flex-wrap: wrap;
     margin-bottom: 20px;
 }
+
+/* ============================================
+   WORKFLOW VISUALIZATION
+   ============================================ */
+
+.workflow-visualization {
+    margin-top: 40px;
+    padding: 30px;
+    background-color: #0a0a0a;
+    border: 2px solid var(--nvidia-green);
+    border-radius: 10px;
+    max-width: 1200px;
+    margin-left: auto;
+    margin-right: auto;
+}
+
+/* Timeline Bar */
+.workflow-timeline {
+    position: relative;
+    margin-bottom: 40px;
+    padding: 20px 0;
+    background-color: #1a1a1a;
+    border-radius: 8px;
+    padding: 20px;
+}
+
+.timeline-track {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    position: relative;
+    gap: 10px;
+    margin-bottom: 20px;
+}
+
+.timeline-agent {
+    flex: 1;
+    text-align: center;
+    position: relative;
+    min-height: 80px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.3s ease;
+}
+
+.timeline-dot {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background-color: #444;
+    border: 2px solid #666;
+    margin-bottom: 8px;
+    transition: all 0.3s ease;
+    box-shadow: 0 0 0 0 rgba(118, 185, 0, 0);
+}
+
+.timeline-agent.active .timeline-dot {
+    background-color: var(--nvidia-green);
+    border-color: #92e000;
+    box-shadow: 0 0 15px rgba(118, 185, 0, 0.8);
+    animation: pulse 1.5s infinite;
+}
+
+.timeline-agent.completed .timeline-dot {
+    background-color: var(--nvidia-green);
+    border-color: var(--nvidia-green);
+    box-shadow: 0 0 10px rgba(118, 185, 0, 0.5);
+}
+
+.timeline-label {
+    font-size: 0.85em;
+    color: #ccc;
+    margin-top: 5px;
+    font-weight: 500;
+}
+
+.timeline-agent.active .timeline-label {
+    color: var(--nvidia-green);
+    font-weight: bold;
+}
+
+.timeline-agent.completed .timeline-label {
+    color: var(--nvidia-green);
+}
+
+/* Progress Bar */
+.timeline-progress-bar {
+    height: 2px;
+    background: linear-gradient(to right, var(--nvidia-green), transparent);
+    border-radius: 1px;
+    width: 0%;
+    transition: width 0.3s ease;
+}
+
+@keyframes pulse {
+    0%, 100% {
+        box-shadow: 0 0 15px rgba(118, 185, 0, 0.8);
+    }
+    50% {
+        box-shadow: 0 0 25px rgba(118, 185, 0, 1);
+    }
+}
+
+/* Workflow Events Container */
+.workflow-events {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    max-height: 600px;
+    overflow-y: auto;
+    padding-right: 10px;
+}
+
+/* Agent Event Card */
+.agent-event-card {
+    background-color: #1a1a1a;
+    border: 1px solid #444;
+    border-radius: 8px;
+    padding: 0;
+    transition: all 0.3s ease;
+    overflow: hidden;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+}
+
+.agent-event-card.active {
+    border-color: var(--nvidia-green);
+    box-shadow: 0 0 15px rgba(118, 185, 0, 0.3);
+}
+
+.agent-event-card.completed {
+    opacity: 0.8;
+}
+
+/* Card Header */
+.agent-card-header {
+    background-color: #2a2a2a;
+    padding: 15px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    cursor: pointer;
+    user-select: none;
+    transition: background-color 0.3s ease;
+}
+
+.agent-card-header:hover {
+    background-color: #333;
+}
+
+.agent-header-content {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex: 1;
+}
+
+.agent-status-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background-color: #666;
+    transition: all 0.3s ease;
+}
+
+.agent-event-card.active .agent-status-dot {
+    background-color: var(--nvidia-green);
+    box-shadow: 0 0 8px rgba(118, 185, 0, 0.8);
+    animation: pulse 1.5s infinite;
+}
+
+.agent-event-card.completed .agent-status-dot {
+    background-color: var(--nvidia-green);
+}
+
+.agent-event-card.error .agent-status-dot {
+    background-color: #f44336;
+}
+
+.agent-card-title {
+    font-size: 1.1em;
+    font-weight: bold;
+    color: var(--light-text);
+    margin: 0;
+}
+
+.agent-card-subtitle {
+    font-size: 0.9em;
+    color: #aaa;
+    margin: 0;
+    margin-left: 5px;
+}
+
+.agent-card-toggle {
+    font-size: 1.2em;
+    color: #888;
+    transition: transform 0.3s ease;
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.agent-event-card.expanded .agent-card-toggle {
+    transform: rotate(180deg);
+    color: var(--nvidia-green);
+}
+
+/* Card Body (Expandable) */
+.agent-card-body {
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 0.3s ease, padding 0.3s ease;
+    padding: 0 15px;
+}
+
+.agent-event-card.expanded .agent-card-body {
+    max-height: 500px;
+    padding: 15px;
+}
+
+.agent-card-section {
+    margin-bottom: 15px;
+}
+
+.agent-card-section:last-child {
+    margin-bottom: 0;
+}
+
+.agent-section-label {
+    font-size: 0.85em;
+    color: var(--nvidia-green);
+    font-weight: bold;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+    display: block;
+}
+
+.agent-section-content {
+    background-color: #2a2a2a;
+    padding: 12px;
+    border-radius: 4px;
+    border-left: 3px solid var(--nvidia-green);
+    font-size: 0.95em;
+    line-height: 1.5;
+    color: #ccc;
+    word-break: break-word;
+    white-space: pre-wrap;
+}
+
+.agent-thinking-content {
+    background-color: #252525;
+    padding: 12px;
+    border-radius: 4px;
+    border-left: 3px solid #2196F3;
+    font-size: 0.9em;
+    line-height: 1.6;
+    color: #aaa;
+    font-style: italic;
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.agent-output-content {
+    background-color: #2a3a2a;
+    padding: 12px;
+    border-radius: 4px;
+    border-left: 3px solid #4CAF50;
+    font-size: 0.95em;
+    line-height: 1.5;
+    color: #4CAF50;
+}
+
+/* Status Indicators */
+.agent-status-badge {
+    display: inline-block;
+    padding: 4px 8px;
+    border-radius: 3px;
+    font-size: 0.8em;
+    font-weight: bold;
+    text-transform: uppercase;
+}
+
+.agent-status-badge.active {
+    background-color: rgba(118, 185, 0, 0.2);
+    color: var(--nvidia-green);
+    border: 1px solid var(--nvidia-green);
+}
+
+.agent-status-badge.completed {
+    background-color: rgba(76, 175, 80, 0.2);
+    color: #4CAF50;
+    border: 1px solid #4CAF50;
+}
+
+.agent-status-badge.error {
+    background-color: rgba(244, 67, 54, 0.2);
+    color: #f44336;
+    border: 1px solid #f44336;
+}
+
+/* Scrollbar styling for workflow events */
+.workflow-events::-webkit-scrollbar {
+    width: 6px;
+}
+
+.workflow-events::-webkit-scrollbar-track {
+    background: #1a1a1a;
+    border-radius: 3px;
+}
+
+.workflow-events::-webkit-scrollbar-thumb {
+    background: var(--nvidia-green);
+    border-radius: 3px;
+}
+
+.workflow-events::-webkit-scrollbar-thumb:hover {
+    background: #92e000;
+}

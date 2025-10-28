@@ -14,16 +14,61 @@
             <button id="startButton" class="nvidia-button">Start Recording</button>
 
             <button id="stopButton" class="nvidia-button stop-button hidden">End Recording</button>
-
-            <a href="workflow_viewer.html" target="_blank" style="text-decoration: none;">
-                <button class="nvidia-button" style="background-color: #6496ff; color: white;">
-                    🔄 Watch Workflow Visualization
-                </button>
-            </a>
         </div>
         
         <p id="statusMessage" class="status-message"></p>
-        
+
+        <!-- Workflow Visualization -->
+        <div id="workflowVisualization" class="workflow-visualization hidden">
+            <!-- Timeline Bar -->
+            <div class="workflow-timeline">
+                <div class="timeline-track">
+                    <div class="timeline-agent" data-agent="Transcript Analyzer">
+                        <div class="timeline-dot"></div>
+                        <div class="timeline-label">Analyze</div>
+                    </div>
+                    <div class="timeline-agent" data-agent="Research & Entity Extraction">
+                        <div class="timeline-dot"></div>
+                        <div class="timeline-label">Research</div>
+                    </div>
+                    <div class="timeline-agent" data-agent="Calendar Context Fetch">
+                        <div class="timeline-dot"></div>
+                        <div class="timeline-label">Calendar</div>
+                    </div>
+                    <div class="timeline-agent" data-agent="Related Meetings Finder">
+                        <div class="timeline-dot"></div>
+                        <div class="timeline-label">Meetings</div>
+                    </div>
+                    <div class="timeline-agent" data-agent="Action Planner">
+                        <div class="timeline-dot"></div>
+                        <div class="timeline-label">Plan</div>
+                    </div>
+                    <div class="timeline-agent" data-agent="Decision Analyzer">
+                        <div class="timeline-dot"></div>
+                        <div class="timeline-label">Decide</div>
+                    </div>
+                    <div class="timeline-agent" data-agent="Risk Assessor">
+                        <div class="timeline-dot"></div>
+                        <div class="timeline-label">Risk</div>
+                    </div>
+                    <div class="timeline-agent" data-agent="Action Executor">
+                        <div class="timeline-dot"></div>
+                        <div class="timeline-label">Execute</div>
+                    </div>
+                    <div class="timeline-agent" data-agent="Summary Generator">
+                        <div class="timeline-dot"></div>
+                        <div class="timeline-label">Summary</div>
+                    </div>
+                </div>
+                <div class="timeline-progress-bar"></div>
+            </div>
+
+            <!-- Agent Events Log -->
+            <div class="workflow-events" id="workflowEvents">
+                <!-- Agent cards will be dynamically inserted here -->
+            </div>
+        </div>
+
         <div id="transcriptionBox" class="transcription-box hidden">
             <p id="transcriptionText" class="transcription-text"></p>
         </div>

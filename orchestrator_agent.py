@@ -337,6 +337,7 @@ class MeetingOrchestrator:
     async def analyze_transcript(self, state: OrchestratorState, config: RunnableConfig):
         """Analyze the transcript to understand meeting context"""
         _LOGGER.info("Analyzing transcript for meeting context...")
+        emit_workflow_event("stage_start", "Transcript Analyzer", {"description": "Analyzing meeting transcript..."})
 
         system_prompt = """You are an expert meeting analyst. Extract key information from meeting transcripts.
 
@@ -377,6 +378,7 @@ Respond ONLY with valid JSON in exactly this format (no other text):
                 "content": f"Meeting Analysis: {json.dumps(analysis, indent=2)}"
             })
             # Don't return analysis, just update messages
+            emit_workflow_event("stage_complete", "Transcript Analyzer", {"status": "success"})
             return state
         except (json.JSONDecodeError, Exception) as e:
             _LOGGER.error(f"Failed to parse analysis JSON: {e}")
@@ -396,23 +398,27 @@ Respond ONLY with valid JSON in exactly this format (no other text):
                 "role": "assistant",
                 "content": f"Meeting Analysis: {json.dumps(default_analysis, indent=2)}"
             })
+            emit_workflow_event("stage_complete", "Transcript Analyzer", {"status": "success"})
             return state
     
     async def fetch_calendar_context(self, state: OrchestratorState, config: RunnableConfig):
         """Fetch relevant calendar events"""
         _LOGGER.info("Fetching calendar events...")
-        
+        emit_workflow_event("stage_start", "Calendar Context Fetch", {"description": "Fetching calendar events..."})
+
         # Get events from past 30 days and next 30 days
         events = self.calendar_tool.fetch_events(days_ahead=30, days_back=30, max_results=50)
         state.calendar_events = events
-        
+
         _LOGGER.info(f"Found {len(events)} calendar events")
+        emit_workflow_event("stage_complete", "Calendar Context Fetch", {"status": "success"})
         return state
     
     async def find_related_meetings(self, state: OrchestratorState, config: RunnableConfig):
         """Use Nemotron to find related past meetings"""
         _LOGGER.info("Finding related past meetings...")
-        
+        emit_workflow_event("stage_start", "Related Meetings Finder", {"description": "Finding related past meetings..."})
+
         # Get the analysis from messages
         analysis_msg = state.messages[-1] if state.messages else {}
         if isinstance(analysis_msg, dict):
@@ -466,16 +472,19 @@ Which calendar events are related? Return ONLY JSON."""
             # Update state directly
             state.related_past_meetings = related
             _LOGGER.info(f"Found {len(related)} related meetings")
+            emit_workflow_event("stage_complete", "Related Meetings Finder", {"status": "success"})
             return state
         except (json.JSONDecodeError, Exception) as e:
             _LOGGER.error(f"Failed to parse related meetings: {e}")
             _LOGGER.error(f"Raw response: {response[:500]}")
             state.related_past_meetings = []
+            emit_workflow_event("stage_complete", "Related Meetings Finder", {"status": "success"})
             return state
     
     async def plan_actions(self, state: OrchestratorState, config: RunnableConfig):
         """Decide what actions to take based on the analysis"""
         _LOGGER.info("Planning actions...")
+        emit_workflow_event("stage_start", "Action Planner", {"description": "Planning actions based on meeting context..."})
 
         # Calculate dates for the prompt
         today = datetime.now(TIMEZONE).date()
@@ -663,11 +672,13 @@ What actions should be taken? Return ONLY JSON."""
             actions = [MeetingAction(**action) for action in actions_data]
             state.planned_actions = actions
             _LOGGER.info(f"Planned {len(actions)} actions")
+            emit_workflow_event("stage_complete", "Action Planner", {"status": "success"})
             return state
         except (json.JSONDecodeError, Exception) as e:
             _LOGGER.error(f"Failed to parse actions: {e}")
             _LOGGER.error(f"Raw response: {response[:500]}")
             state.planned_actions = []
+            emit_workflow_event("stage_complete", "Action Planner", {"status": "success"})
             return state
     
     def _create_execution_result(self, status: str, action_type: str, message: str,
@@ -685,6 +696,7 @@ What actions should be taken? Return ONLY JSON."""
     async def execute_actions(self, state: OrchestratorState, config: RunnableConfig):
         """Execute the planned actions in two phases: FIND_SLOT first, then others"""
         _LOGGER.info("Executing planned actions...")
+        emit_workflow_event("stage_start", "Action Executor", {"description": "Executing planned actions..."})
 
         # Skip execution if auto_execute is False (manual approval required)
         if not state.auto_execute:
@@ -697,6 +709,7 @@ What actions should be taken? Return ONLY JSON."""
                     technical_details="Manual approval required before execution"
                 )
             ]
+            emit_workflow_event("stage_complete", "Action Executor", {"status": "success"})
             return state
 
         results = []
@@ -866,11 +879,13 @@ What actions should be taken? Return ONLY JSON."""
                 ))
 
         state.execution_results = results
+        emit_workflow_event("stage_complete", "Action Executor", {"status": "success"})
         return state
     
     async def generate_summary(self, state: OrchestratorState, config: RunnableConfig):
         """Generate a final summary of what was done"""
         _LOGGER.info("Generating final summary...")
+        emit_workflow_event("stage_start", "Summary Generator", {"description": "Generating meeting summary and sending notifications..."})
 
         system_prompt = """You are a meeting assistant. Create a clear, structured summary organized by sections.
 
@@ -933,6 +948,7 @@ Requirements:
             "content": f"Summary:\n{summary}"
         })
 
+        emit_workflow_event("stage_complete", "Summary Generator", {"status": "success"})
         return state
 
     async def _generate_next_steps(self, state: OrchestratorState, summary: str) -> List[str]:
@@ -1092,6 +1108,7 @@ Generate 3-4 specific next steps the team should take:"""
     async def research_agent(self, state: OrchestratorState, config: RunnableConfig):
         """Research agent: Extracts entities and gathers background context"""
         _LOGGER.info("Research Agent: Extracting entities and gathering context...")
+        emit_workflow_event("stage_start", "Research & Entity Extraction", {"description": "Extracting entities and gathering context..."})
 
         system_prompt = """You are a research agent that extracts important entities from a meeting transcript
 and provides context about them. Your job is to identify:
@@ -1134,6 +1151,7 @@ Extract key entities and provide context for research:"""
             })
 
             _LOGGER.info(f"Research Agent: Identified {len(research_data.get('entities', []))} entities")
+            emit_workflow_event("stage_complete", "Research & Entity Extraction", {"status": "success"})
             return state
 
         except Exception as e:
@@ -1143,11 +1161,13 @@ Extract key entities and provide context for research:"""
                 "agent": "research_agent",
                 "content": f"Research agent completed with note: {str(e)}"
             })
+            emit_workflow_event("stage_complete", "Research & Entity Extraction", {"status": "success"})
             return state
 
     async def decision_agent(self, state: OrchestratorState, config: RunnableConfig):
         """Decision agent: Analyzes options and provides intelligent recommendations"""
         _LOGGER.info("Decision Agent: Analyzing planned actions and providing recommendations...")
+        emit_workflow_event("stage_start", "Decision Analyzer", {"description": "Analyzing options and providing recommendations..."})
 
         system_prompt = """You are a decision-making agent that analyzes proposed actions and provides
 intelligent recommendations. You evaluate options based on:
@@ -1197,6 +1217,7 @@ Analyze these actions and provide recommendations:"""
             })
 
             _LOGGER.info(f"Decision Agent: Analyzed {len(decisions_data.get('decisions', []))} actions")
+            emit_workflow_event("stage_complete", "Decision Analyzer", {"status": "success"})
             return state
 
         except Exception as e:
@@ -1206,11 +1227,13 @@ Analyze these actions and provide recommendations:"""
                 "agent": "decision_agent",
                 "content": f"Decision agent completed with note: {str(e)}"
             })
+            emit_workflow_event("stage_complete", "Decision Analyzer", {"status": "success"})
             return state
 
     async def risk_assessment_agent(self, state: OrchestratorState, config: RunnableConfig):
         """Risk assessment agent: Identifies and evaluates risks in planned actions"""
         _LOGGER.info("Risk Assessment Agent: Identifying potential risks...")
+        emit_workflow_event("stage_start", "Risk Assessor", {"description": "Evaluating risks and potential issues..."})
 
         system_prompt = """You are a risk assessment agent specialized in identifying potential issues
 in meeting action items and scheduled events. Evaluate risks in:
@@ -1270,6 +1293,7 @@ Identify risks and provide assessment:"""
             })
 
             _LOGGER.info(f"Risk Assessment Agent: Identified {len(risk_data.get('risks', []))} risks")
+            emit_workflow_event("stage_complete", "Risk Assessor", {"status": "success"})
             return state
 
         except Exception as e:
@@ -1279,6 +1303,7 @@ Identify risks and provide assessment:"""
                 "agent": "risk_assessment_agent",
                 "content": f"Risk assessment completed with note: {str(e)}"
             })
+            emit_workflow_event("stage_complete", "Risk Assessor", {"status": "success"})
             return state
 
 
@@ -1315,19 +1340,46 @@ def create_orchestrator_graph():
     return workflow.compile()
 
 
+# Event callback system for streaming progress
+_event_callback = None
+
+def set_workflow_event_callback(callback):
+    """Set a callback function for workflow events"""
+    global _event_callback
+    _event_callback = callback
+
+def emit_workflow_event(event_type: str, agent_name: str, data: dict = None):
+    """Emit a workflow event to all listeners"""
+    global _event_callback
+    if _event_callback:
+        event = {
+            "type": event_type,
+            "agent": agent_name,
+            "timestamp": datetime.now(TIMEZONE).isoformat(),
+        }
+        if data:
+            event.update(data)
+        _event_callback(event)
+
+
 # Helper function for Flask integration
-async def run_orchestrator(transcript: str, auto_execute: bool = True) -> dict:
+async def run_orchestrator(transcript: str, auto_execute: bool = True, event_callback=None) -> dict:
     """
     Run the orchestrator workflow and return serializable results
 
     Args:
         transcript: Meeting transcript text
         auto_execute: If True, execute actions; if False, return planned actions only
+        event_callback: Optional callback function for streaming events
 
     Returns:
         Dictionary with planned_actions, execution_results, and summary
     """
     _LOGGER.info(f"Running orchestrator (auto_execute={auto_execute})...")
+
+    # Set up the event callback if provided
+    if event_callback:
+        set_workflow_event_callback(event_callback)
 
     # Create the graph
     graph = create_orchestrator_graph()

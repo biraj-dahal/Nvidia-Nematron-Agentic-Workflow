@@ -18,6 +18,55 @@ The system now includes:
 - **Improved JSON Parsing**: Handles LLM `<think>` blocks and balanced bracket counting
 - **Two-Phase Execution**: FIND_SLOT actions execute first, then CREATE_EVENT can use discovered slots
 
+## Real-Time Workflow Visualization
+
+The system now features inline, ChatGPT-style workflow visualization that shows live progress as agents execute:
+
+### Key Features
+
+1. **Timeline Bar** - Shows all 9 agents with status indicators:
+   - Pending (gray)
+   - Active (green with pulsing glow animation)
+   - Completed (green checkmark)
+   - Progress bar fills as stages complete
+
+2. **Expandable Agent Cards** - Click to expand/collapse:
+   - Agent name and current status description
+   - Real-time streaming updates as agent works
+   - Status badge (Active/Completed/Error)
+   - Auto-collapses when stage completes
+   - Smooth animations for expand/collapse
+
+3. **Real-Time Streaming** - Uses Server-Sent Events (SSE):
+   - Backend emits `stage_start` and `stage_complete` events
+   - Frontend receives updates in real-time
+   - No polling, efficient one-way communication
+   - Auto-scrolls to active agent for visibility
+
+### Technical Implementation
+
+**Backend (server.py)**:
+- `/stream-workflow` endpoint: SSE stream for workflow events
+- `broadcast_workflow_event()`: Sends events to all connected clients
+- Thread-safe queue management for multiple clients
+
+**Orchestrator (orchestrator_agent.py)**:
+- `emit_workflow_event()`: Emits stage_start/stage_complete events
+- Event callback system: Events flow from orchestrator to frontend
+- All 9 agents (nodes) emit events at start and completion
+
+**Frontend (script.js)**:
+- `startWorkflowStream()`: Initiates SSE connection
+- `handleWorkflowEvent()`: Processes incoming events
+- `createAgentCard()`: Dynamically builds expandable card UI
+- `updateTimeline()`: Updates timeline progress bar
+
+**Styling (styles.css)**:
+- NVIDIA green theme with animations
+- Pulsing active agent indicator
+- Smooth transitions and hover effects
+- Custom scrollbar for event log
+
 ## Architecture
 
 ### Multi-Agent Workflow (LangGraph)
@@ -221,6 +270,68 @@ CALEN_ID = '1e48c44c1ad2d312b31ee14323a2fc98c71147e7d43450be5210b88638c75384@gro
 
 Update this to use a different calendar.
 
+## Testing the Inline Workflow Visualization
+
+To see the real-time workflow visualization in action:
+
+1. **Start the Flask server**:
+   ```bash
+   python server.py
+   ```
+
+2. **Open the web interface**:
+   ```
+   http://localhost:3000
+   ```
+
+3. **Record a meeting or paste a transcript**:
+   - Click "Start Recording" to capture audio
+   - OR manually provide transcript via the API
+
+4. **Watch the visualization**:
+   - The timeline bar appears showing all 9 agents
+   - As each agent executes, it becomes highlighted in green with pulsing animation
+   - Agent cards appear below showing real-time status
+   - Click any card to expand and see full details
+   - Progress bar fills as agents complete
+   - When agent finishes, card auto-collapses and turns completed (solid green)
+
+5. **Monitor SSE Connection**:
+   - Open browser DevTools → Network tab
+   - Look for `/stream-workflow` connection
+   - Should show as EventStream with `text/event-stream` MIME type
+   - Watch XHR messages for `stage_start` and `stage_complete` events
+
+## Common Development Commands
+
+### Run the Main Orchestrator
+```bash
+python orchestrator_agent.py
+```
+This executes a sample workflow with hardcoded transcript. Modify `sample_transcript` in `main()` to test different content.
+
+### Test Calendar Tool
+```bash
+python calender_tool.py
+```
+Tests Google Calendar API integration independently.
+
+### Run the Web UI & Recording
+```bash
+# Set NVIDIA API key
+export API_KEY=your_nvidia_api_key
+
+# Start Flask server (runs on http://localhost:5000)
+python server.py
+```
+
+### Test ASR Transcription (Python-Clients)
+```bash
+cd python-clients/scripts/asr
+python transcribe_file.py --input_file /path/to/audio.wav
+```
+Requires valid NVIDIA API key and gRPC connectivity to `grpc.nvcf.nvidia.com:443`.
+
 ## Development Notes
 
 - The codebase uses Python 3.13+ (based on requirements.txt)
@@ -229,6 +340,94 @@ Update this to use a different calendar.
 - The requirements.txt contains full Anaconda environment exports - many dependencies are unused
 - Action type normalization handles uppercase LLM responses (e.g., "ADD_NOTES" → "add_notes")
 - Two-phase execution ensures FIND_SLOT results are available for CREATE_EVENT actions
+
+## Attendee Mapping System
+
+### Structure
+The attendee system has evolved from hardcoded dictionaries to a configurable `attendee_mapping.json`:
+
+```json
+{
+  "attendees": [
+    {
+      "primary_name": "rahual",
+      "email": "rahual.rai@bison.howard.edu",
+      "aliases": ["Rahual", "RAHUAL", "rahual rai", "Rahual Rai", "rai"],
+      "first_name": "Rahual",
+      "last_name": "Rai"
+    }
+  ],
+  "default_domain": "example.com",
+  "fuzzy_match_threshold": 0.8
+}
+```
+
+### Name Matching Process
+1. **Exact match** - Check `primary_name` and `aliases` for exact match (case-insensitive)
+2. **Fuzzy match** - Use sequence matching against aliases (threshold: 0.8 by default, configurable)
+3. **Auto-generate** - If no match found, generate email as `firstname.lastname@default_domain` or `firstname@default_domain`
+
+### Adding New Attendees
+Edit `attendee_mapping.json` and add to the `attendees` array:
+```json
+{
+  "primary_name": "newperson",
+  "email": "newperson@company.com",
+  "aliases": ["NewPerson", "New Person", "np"],
+  "first_name": "New",
+  "last_name": "Person"
+}
+```
+
+### Fuzzy Matching Adjustment
+Modify `fuzzy_match_threshold` in `attendee_mapping.json` to adjust matching sensitivity:
+- Higher value (0.95): Stricter matching, more auto-generation
+- Lower value (0.7): More lenient matching, accepts partial name variations
+
+## Module Dependencies
+
+### Core Modules
+- **orchestrator_agent.py** - Main orchestration, imports `CalendarAgentTool`, `GmailAgentTool`
+- **calender_tool.py** - Google Calendar API, requires OAuth and timezone configuration
+- **email_tool.py** - Gmail API, uses same OAuth credentials as calendar
+- **translate.py** - Transcript analysis utilities (imported as needed)
+
+### Frontend & Server
+- **server.py** - Flask app serving `index.html` and handling `/transcribe` endpoint
+- **index.html** - Main UI for audio recording and workflow execution
+- **workflow_viewer.html** - Separate visualization interface (displays workflow graph in real-time)
+- **script.js** - Client-side audio recording and upload logic
+- **styles.css** - NVIDIA-themed styling applied to both interfaces
+
+### External Dependencies
+- **python-clients/** - NVIDIA Riva ASR client library (submodule containing gRPC clients)
+  - Used by `server.py` to transcribe audio via `transcribe_file.py` script
+  - Requires `grpc.nvcf.nvidia.com:443` connectivity
+  - Depends on NVIDIA API key for authentication
+
+## Configuration & Troubleshooting
+
+### Changing Calendar
+Update `CALEN_ID` in `calender_tool.py:28`:
+```python
+CALEN_ID = 'your-calendar-id@group.calendar.google.com'
+```
+Find your calendar ID in Google Calendar settings.
+
+### Resetting Google OAuth
+If you encounter 403 errors or permission issues:
+1. Delete `token.pickle`
+2. Re-run the application to trigger OAuth re-authentication
+3. Ensure the OAuth consent screen has requested these scopes:
+   - `https://www.googleapis.com/auth/calendar`
+   - `https://www.googleapis.com/auth/gmail.send`
+
+### Debugging
+Set logging level in code or via environment:
+```python
+logging.basicConfig(level=logging.DEBUG)
+```
+The `_LOGGER` is configured at module level in `orchestrator_agent.py`.
 
 ## Security Considerations
 

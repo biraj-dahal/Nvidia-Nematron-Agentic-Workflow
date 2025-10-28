@@ -5,7 +5,9 @@ import asyncio
 import base64
 import httpx
 import wave
-from flask import Flask, request, jsonify
+import queue
+import threading
+from flask import Flask, request, jsonify, Response
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
 import shutil # Used for file cleanup
@@ -21,9 +23,14 @@ from orchestrator_agent import run_orchestrator
 
 # --- CONFIGURATION ---
 app = Flask(__name__)
-CORS(app) 
+CORS(app)
 UPLOAD_FOLDER = 'uploads'
 TEMP_WAV_FILE = 'recording_16k_mono.wav'
+
+# Global event queue for SSE streaming
+# Each client gets its own queue when connecting
+workflow_event_queues = []
+workflow_event_lock = threading.Lock()
 # Full path to the NVIDIA script (adjust if your structure is different)
 TRANSCRIPTION_SCRIPT_PATH = os.path.join(
     'python-clients', 'scripts', 'asr', 'transcribe_file.py'
@@ -37,6 +44,23 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 NVIDIA_API_KEY = os.environ.get("API_KEY", "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")
 if not NVIDIA_API_KEY:
     raise EnvironmentError("The API_KEY environment variable is not set. Please set it as per NVIDIA instructions.")
+
+
+def broadcast_workflow_event(event_data: dict):
+    """Broadcast a workflow event to all connected SSE clients"""
+    with workflow_event_lock:
+        # Remove dead queues and broadcast to active ones
+        dead_queues = []
+        for i, q in enumerate(workflow_event_queues):
+            try:
+                q.put_nowait(event_data)
+            except queue.Full:
+                # Queue is full, mark for removal
+                dead_queues.append(i)
+
+        # Remove dead queues in reverse order to maintain indices
+        for i in reversed(dead_queues):
+            workflow_event_queues.pop(i)
 
 
 def convert_to_nvidia_format(input_path, output_path):
@@ -152,6 +176,46 @@ def run_nvidia_transcription(filepath):
         return f"ASR Error: An unexpected error occurred. {e}"
 
 
+@app.route('/stream-workflow', methods=['GET'])
+def stream_workflow():
+    """SSE endpoint for streaming workflow progress events"""
+    def event_generator():
+        # Create a queue for this client
+        client_queue = queue.Queue(maxsize=100)
+
+        # Register the queue
+        with workflow_event_lock:
+            workflow_event_queues.append(client_queue)
+
+        # Track if client is still connected
+        client_id = id(client_queue)
+
+        try:
+            # Send initial connection message
+            yield f"data: {json.dumps({'type': 'connected', 'message': 'Connected to workflow stream'})}\n\n"
+
+            # Stream events from the queue
+            while True:
+                try:
+                    # Get event from queue with timeout
+                    event = client_queue.get(timeout=30)  # 30 second timeout for keep-alive
+                    yield f"data: {json.dumps(event)}\n\n"
+                except queue.Empty:
+                    # Send keep-alive heartbeat
+                    yield f"data: {json.dumps({'type': 'heartbeat'})}\n\n"
+        finally:
+            # Clean up when client disconnects
+            with workflow_event_lock:
+                if client_queue in workflow_event_queues:
+                    workflow_event_queues.remove(client_queue)
+
+    return Response(event_generator(), mimetype='text/event-stream', headers={
+        'Cache-Control': 'no-cache',
+        'X-Accel-Buffering': 'no',
+        'Connection': 'keep-alive'
+    })
+
+
 @app.route('/transcribe', methods=['POST'])
 def transcribe():
     # Temporary files are stored in the 'uploads' folder
@@ -248,8 +312,8 @@ def orchestrate():
 
         print(f"Running orchestrator (auto_execute={auto_execute}, transcript length={len(transcript)})")
 
-        # Run the orchestrator workflow (async)
-        result = asyncio.run(run_orchestrator(transcript, auto_execute))
+        # Run the orchestrator workflow (async) with event broadcasting
+        result = asyncio.run(run_orchestrator(transcript, auto_execute, event_callback=broadcast_workflow_event))
 
         print(f"Orchestrator completed: {len(result['planned_actions'])} actions planned")
 

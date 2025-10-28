@@ -7,6 +7,200 @@ let mediaRecorder;
 let audioChunks = [];
 let audioStream;
 
+// ============================================
+// WORKFLOW VISUALIZATION & SSE
+// ============================================
+
+let workflowEventSource = null;
+let activeAgentCard = null;
+const agentOrder = [
+    'Transcript Analyzer',
+    'Research & Entity Extraction',
+    'Calendar Context Fetch',
+    'Related Meetings Finder',
+    'Action Planner',
+    'Decision Analyzer',
+    'Risk Assessor',
+    'Action Executor',
+    'Summary Generator'
+];
+
+function startWorkflowStream() {
+    // Close existing connection if any
+    if (workflowEventSource) {
+        workflowEventSource.close();
+    }
+
+    // Create new SSE connection
+    workflowEventSource = new EventSource('http://localhost:3000/stream-workflow');
+
+    // Handle incoming events
+    workflowEventSource.onmessage = (event) => {
+        try {
+            const data = JSON.parse(event.data);
+            handleWorkflowEvent(data);
+        } catch (error) {
+            console.error('Error parsing event:', error);
+        }
+    };
+
+    workflowEventSource.onerror = (error) => {
+        console.error('SSE connection error:', error);
+        if (workflowEventSource.readyState === EventSource.CLOSED) {
+            console.log('Workflow stream closed');
+        }
+    };
+}
+
+function handleWorkflowEvent(event) {
+    const { type, agent, timestamp, description, status } = event;
+
+    if (type === 'connected') {
+        console.log('Connected to workflow stream');
+        return;
+    }
+
+    if (type === 'heartbeat') {
+        return;
+    }
+
+    // Show workflow visualization
+    const vizElement = document.getElementById('workflowVisualization');
+    vizElement.classList.remove('hidden');
+
+    if (type === 'stage_start') {
+        handleStageStart(agent, description);
+        updateTimeline(agent, 'active');
+    } else if (type === 'stage_complete') {
+        handleStageComplete(agent, status);
+        updateTimeline(agent, 'completed');
+    }
+}
+
+function handleStageStart(agentName, description) {
+    // Create or update agent card
+    const container = document.getElementById('workflowEvents');
+    let card = document.getElementById(`agent-card-${agentName}`);
+
+    if (!card) {
+        card = createAgentCard(agentName, description);
+        container.appendChild(card);
+    }
+
+    // Mark as active
+    document.querySelectorAll('.agent-event-card').forEach(c => {
+        c.classList.remove('active');
+        c.classList.add('completed');
+    });
+    card.classList.add('active');
+    card.classList.remove('completed');
+
+    // Store as active
+    activeAgentCard = card;
+
+    // Auto-scroll to active card
+    card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function handleStageComplete(agentName, status) {
+    const card = document.getElementById(`agent-card-${agentName}`);
+    if (card) {
+        card.classList.remove('active');
+        card.classList.add('completed');
+
+        // Auto-collapse completed cards
+        card.classList.remove('expanded');
+    }
+}
+
+function createAgentCard(agentName, description) {
+    const card = document.createElement('div');
+    card.id = `agent-card-${agentName}`;
+    card.className = 'agent-event-card active';
+
+    const header = document.createElement('div');
+    header.className = 'agent-card-header';
+
+    const headerContent = document.createElement('div');
+    headerContent.className = 'agent-header-content';
+
+    const dot = document.createElement('div');
+    dot.className = 'agent-status-dot';
+
+    const titleContainer = document.createElement('div');
+    const title = document.createElement('h4');
+    title.className = 'agent-card-title';
+    title.textContent = agentName;
+
+    const subtitle = document.createElement('span');
+    subtitle.className = 'agent-card-subtitle';
+    subtitle.textContent = description || 'Processing...';
+
+    titleContainer.appendChild(title);
+    titleContainer.appendChild(subtitle);
+
+    headerContent.appendChild(dot);
+    headerContent.appendChild(titleContainer);
+
+    const toggle = document.createElement('div');
+    toggle.className = 'agent-card-toggle';
+    toggle.textContent = '▼';
+
+    header.appendChild(headerContent);
+    header.appendChild(toggle);
+
+    const body = document.createElement('div');
+    body.className = 'agent-card-body';
+
+    const section = document.createElement('div');
+    section.className = 'agent-card-section';
+
+    const label = document.createElement('span');
+    label.className = 'agent-section-label';
+    label.textContent = 'Status';
+
+    const content = document.createElement('div');
+    content.className = 'agent-section-content';
+    content.textContent = description || 'Processing...';
+
+    const badge = document.createElement('span');
+    badge.className = 'agent-status-badge active';
+    badge.textContent = 'Active';
+
+    section.appendChild(label);
+    section.appendChild(badge);
+    section.appendChild(content);
+    body.appendChild(section);
+
+    // Add click handler for expansion
+    header.addEventListener('click', () => {
+        card.classList.toggle('expanded');
+    });
+
+    card.appendChild(header);
+    card.appendChild(body);
+
+    return card;
+}
+
+function updateTimeline(agentName, status) {
+    // Find the timeline agent element
+    const timelineAgents = document.querySelectorAll('.timeline-agent');
+
+    timelineAgents.forEach(agent => {
+        if (agent.getAttribute('data-agent') === agentName) {
+            agent.classList.remove('pending');
+            agent.classList.add(status);
+
+            // Update progress bar
+            const completedCount = document.querySelectorAll('.timeline-agent.completed').length;
+            const progressPercent = (completedCount / timelineAgents.length) * 100;
+            const progressBar = document.querySelector('.timeline-progress-bar');
+            progressBar.style.width = progressPercent + '%';
+        }
+    });
+}
+
 // --- Functions to toggle buttons and status (No Change Needed Here) ---
 function startRecordingUI() {
     startButton.classList.add('hidden');
@@ -139,6 +333,9 @@ async function callOrchestrator(transcript) {
     try {
         statusMessage.textContent = 'Analyzing meeting and planning actions...';
 
+        // Start the workflow stream to show real-time progress
+        startWorkflowStream();
+
         const response = await fetch('http://localhost:3000/orchestrate', {
             method: 'POST',
             headers: {
@@ -168,6 +365,12 @@ async function callOrchestrator(transcript) {
 function displayOrchestratorResults(result, autoExecute) {
     const resultsContainer = document.getElementById('orchestratorResults');
     resultsContainer.classList.remove('hidden');
+
+    // Close the workflow stream when done
+    if (workflowEventSource) {
+        workflowEventSource.close();
+        workflowEventSource = null;
+    }
 
     // Display planned actions
     displayPlannedActions(result.planned_actions);
