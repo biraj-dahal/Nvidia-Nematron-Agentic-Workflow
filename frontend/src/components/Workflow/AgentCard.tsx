@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Box, Card, CardContent, Typography, Collapse, Chip } from '@mui/material';
 import { ExpandMore } from '@mui/icons-material';
 
@@ -19,6 +19,11 @@ export const AgentCard: React.FC<AgentCardProps> = ({
 }) => {
   const [localExpanded, setLocalExpanded] = useState(externalExpanded);
   const isExpanded = externalExpanded !== undefined ? externalExpanded : localExpanded;
+
+  // Sync external expanded prop with local state for real-time updates
+  useEffect(() => {
+    setLocalExpanded(externalExpanded);
+  }, [externalExpanded]);
 
   const handleToggle = () => {
     const newState = !isExpanded;
