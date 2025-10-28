@@ -84,10 +84,11 @@ const AppContent: React.FC = () => {
 
   // Callback for workflow stream events
   const onWorkflowEvent = useCallback((event: any) => {
+    console.log('📡 [SSE Event]', event.type, event.agent || 'N/A');
     handleWorkflowEvent(event);
   }, [handleWorkflowEvent]);
 
-  const { startStream, closeStream: stopStream } = useWorkflowStream(onWorkflowEvent);
+  const { startStream, closeStream: stopStream, isConnected } = useWorkflowStream(onWorkflowEvent);
 
   // Error handling effect
   useEffect(() => {
@@ -187,6 +188,22 @@ const AppContent: React.FC = () => {
   const handleOrchestration = async (transcriptionText: string) => {
     try {
       setStatusMessage('Running AI workflow...');
+
+      // CRITICAL: Wait for SSE connection to be established before starting workflow
+      // This prevents losing early events due to connection timing issues
+      console.log('⏳ Waiting for SSE connection...');
+      let attempts = 0;
+      const maxAttempts = 20; // 2 seconds max wait
+      while (!isConnected && attempts < maxAttempts) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+        attempts++;
+      }
+
+      if (isConnected) {
+        console.log('✓ SSE Connected! Starting workflow...');
+      } else {
+        console.warn('⚠ SSE connection timeout, proceeding anyway...');
+      }
 
       // Run orchestrator (workflow updates will come via SSE)
       const result = await runOrchestrator(transcriptionText, autoExecute);

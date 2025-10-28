@@ -44,6 +44,7 @@ export const WorkflowProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   const handleWorkflowEvent = useCallback((event: WorkflowEvent) => {
     const { type, agent, description, status } = event;
+    console.log('🔄 [WorkflowContext]', type, agent || 'N/A');
 
     if (type === 'stage_start' && agent) {
       setWorkflow((prev) => ({
