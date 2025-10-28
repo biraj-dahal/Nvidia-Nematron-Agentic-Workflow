@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>xyz - The NVIDIA Theme App</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <h1 class="title-xyz">Core 4.0</h1>
+        
+        <div class="button-controls">
+            <button id="startButton" class="nvidia-button">Start Recording</button>
+            
+            <button id="stopButton" class="nvidia-button stop-button hidden">End Recording</button>
+        </div>
+        
+        <p id="statusMessage" class="status-message"></p>
+        
+        <div id="transcriptionBox" class="transcription-box hidden">
+            <p id="transcriptionText" class="transcription-text"></p>
+        </div>
+        
+        <div id="audioPlayback"></div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
