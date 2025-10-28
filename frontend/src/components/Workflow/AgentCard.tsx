@@ -157,27 +157,6 @@ export const AgentCard: React.FC<AgentCardProps> = ({
       {/* Body - Collapsible */}
       <Collapse in={isExpanded} timeout="auto" unmountOnExit>
         <CardContent sx={{ backgroundColor: '#252525', padding: 2 }}>
-          {/* Status Details Section */}
-          <Typography variant="caption" sx={{ color: '#76B900', fontWeight: 'bold', fontSize: '0.8em', display: 'block', marginBottom: 1, textTransform: 'uppercase' }}>
-            Status Details
-          </Typography>
-          <Box
-            sx={{
-              backgroundColor: '#2a2a2a',
-              padding: 1.5,
-              borderRadius: '4px',
-              borderLeft: '3px solid #76B900',
-              color: '#ccc',
-              fontSize: '0.95em',
-              lineHeight: 1.6,
-              whiteSpace: 'pre-wrap',
-              wordBreak: 'break-word',
-              marginBottom: 2,
-            }}
-          >
-            {description || 'No details available'}
-          </Box>
-
           {/* Execution Logs Section */}
           {logs.length > 0 && (
             <Box>
