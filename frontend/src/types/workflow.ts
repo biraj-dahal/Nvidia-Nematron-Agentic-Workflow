@@ -53,7 +53,7 @@ export interface OrchestratorResponse {
 
 // Log entry for execution details
 export interface LogEntry {
-  type: 'input' | 'processing' | 'api_call' | 'output' | 'timing' | 'error';
+  type: 'input' | 'processing' | 'api_call' | 'output' | 'timing' | 'error' | 'thinking';
   timestamp: string; // ISO format or HH:MM:SS
   message: string;
   metadata?: {

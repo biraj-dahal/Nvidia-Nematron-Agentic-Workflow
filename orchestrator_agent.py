@@ -142,6 +142,23 @@ def strip_thinking_content(text: str) -> str:
     return text
 
 
+def extract_thinking_content(text: str) -> tuple:
+    """
+    Extract thinking/reasoning content from AI output
+    Returns tuple of (thinking_content, cleaned_response)
+    """
+    import re
+
+    # Extract content between <think> and </think> tags
+    thinking_match = re.search(r'<think>(.*?)</think>', text, flags=re.DOTALL)
+    thinking_content = thinking_match.group(1).strip() if thinking_match else None
+
+    # Strip thinking tags from response
+    cleaned_text = strip_thinking_content(text)
+
+    return thinking_content, cleaned_text
+
+
 def generate_calendar_link(event_id: str) -> str:
     """Generate Google Calendar edit link for an event"""
     if not event_id:
@@ -384,6 +401,15 @@ Respond ONLY with valid JSON in exactly this format (no other text):
         response = self._call_nemotron(system_prompt, user_prompt, json_mode=True)
         api_duration_ms = int((time.time() - start_time) * 1000)
 
+        # Extract thinking content if present
+        thinking_content, clean_response = extract_thinking_content(response)
+        if thinking_content:
+            logs.append({
+                "type": "thinking",
+                "timestamp": datetime.now(TIMEZONE).strftime("%H:%M:%S"),
+                "message": thinking_content[:500]  # First 500 chars for display
+            })
+
         # Add API call log
         logs.append({
             "type": "api_call",
@@ -396,10 +422,10 @@ Respond ONLY with valid JSON in exactly this format (no other text):
         })
 
         _LOGGER.info(f"Raw response from Nemotron:\n{response}\n")
-        
+
         try:
             # Extract JSON from response
-            json_str = self._extract_json(response)
+            json_str = self._extract_json(clean_response)
             _LOGGER.info(f"Extracted JSON: {json_str[:200]}...")
             analysis = json.loads(json_str)
 
@@ -808,6 +834,15 @@ What actions should be taken? Return ONLY JSON."""
         response = self._call_nemotron(system_prompt, user_prompt, json_mode=True)
         api_duration_ms = int((time.time() - start_time) * 1000)
 
+        # Extract thinking content if present
+        thinking_content, clean_response = extract_thinking_content(response)
+        if thinking_content:
+            logs.append({
+                "type": "thinking",
+                "timestamp": datetime.now(TIMEZONE).strftime("%H:%M:%S"),
+                "message": thinking_content[:500]  # First 500 chars for display
+            })
+
         # Add API call log
         logs.append({
             "type": "api_call",
@@ -820,9 +855,9 @@ What actions should be taken? Return ONLY JSON."""
         })
 
         _LOGGER.info(f"Raw actions response from Nemotron:\n{response}\n")
-        
+
         try:
-            json_str = self._extract_json(response)
+            json_str = self._extract_json(clean_response)
             _LOGGER.info(f"Actions JSON: {json_str[:200]}")
             actions_data = json.loads(json_str)
 
@@ -1179,8 +1214,17 @@ Requirements:
 
         # Track API call timing
         start_time = time.time()
-        summary = self._call_nemotron(system_prompt, user_prompt)
+        response = self._call_nemotron(system_prompt, user_prompt)
         api_duration_ms = int((time.time() - start_time) * 1000)
+
+        # Extract thinking content if present
+        thinking_content, summary = extract_thinking_content(response)
+        if thinking_content:
+            logs.append({
+                "type": "thinking",
+                "timestamp": datetime.now(TIMEZONE).strftime("%H:%M:%S"),
+                "message": thinking_content[:500]  # First 500 chars for display
+            })
 
         # Add API call log
         logs.append({
@@ -1193,8 +1237,6 @@ Requirements:
             }
         })
 
-        # Strip thinking content and clean up
-        summary = strip_thinking_content(summary)
         _LOGGER.info(f"Generated summary (cleaned): {summary[:200]}...")
 
         # Generate next steps using AI
@@ -1507,6 +1549,15 @@ Analyze these actions and provide recommendations:"""
             response = self._call_nemotron(system_prompt, user_prompt, json_mode=True)
             api_duration_ms = int((time.time() - start_time) * 1000)
 
+            # Extract thinking content if present
+            thinking_content, clean_response = extract_thinking_content(response)
+            if thinking_content:
+                logs.append({
+                    "type": "thinking",
+                    "timestamp": datetime.now(TIMEZONE).strftime("%H:%M:%S"),
+                    "message": thinking_content[:500]  # First 500 chars for display
+                })
+
             # Add API call log
             logs.append({
                 "type": "api_call",
@@ -1518,7 +1569,7 @@ Analyze these actions and provide recommendations:"""
                 }
             })
 
-            json_str = self._extract_json(response)
+            json_str = self._extract_json(clean_response)
             decisions_data = json.loads(json_str)
 
             state.messages.append({
@@ -1630,6 +1681,15 @@ Identify risks and provide assessment:"""
             response = self._call_nemotron(system_prompt, user_prompt, json_mode=True)
             api_duration_ms = int((time.time() - start_time) * 1000)
 
+            # Extract thinking content if present
+            thinking_content, clean_response = extract_thinking_content(response)
+            if thinking_content:
+                logs.append({
+                    "type": "thinking",
+                    "timestamp": datetime.now(TIMEZONE).strftime("%H:%M:%S"),
+                    "message": thinking_content[:500]  # First 500 chars for display
+                })
+
             # Add API call log
             logs.append({
                 "type": "api_call",
@@ -1641,7 +1701,7 @@ Identify risks and provide assessment:"""
                 }
             })
 
-            json_str = self._extract_json(response)
+            json_str = self._extract_json(clean_response)
             risk_data = json.loads(json_str)
 
             state.messages.append({

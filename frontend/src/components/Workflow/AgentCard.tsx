@@ -28,6 +28,7 @@ export const AgentCard: React.FC<AgentCardProps> = ({
   // Group logs by type
   const groupedLogs = useMemo(() => {
     const grouped: Record<string, LogEntry[]> = {
+      thinking: [],
       input: [],
       processing: [],
       api_call: [],
@@ -218,6 +219,27 @@ export const AgentCard: React.FC<AgentCardProps> = ({
                           {log.timestamp}
                         </Typography>
                         <Typography variant="caption" sx={{ display: 'block', color: '#ccc', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                          {log.message}
+                        </Typography>
+                      </Box>
+                    ))}
+                  </AccordionDetails>
+                </Accordion>
+              )}
+
+              {/* Thinking Logs */}
+              {groupedLogs.thinking.length > 0 && (
+                <Accordion defaultExpanded={true} sx={{ backgroundColor: '#2a2a2a', marginBottom: 1, border: '1px solid #4a7c59' }}>
+                  <AccordionSummary expandIcon={<ExpandMore />} sx={{ color: '#7cb342' }}>
+                    💭 AI Reasoning ({groupedLogs.thinking.length})
+                  </AccordionSummary>
+                  <AccordionDetails sx={{ backgroundColor: '#1a1a1a', padding: 1.5 }}>
+                    {groupedLogs.thinking.map((log, idx) => (
+                      <Box key={idx} sx={{ marginBottom: 1, color: '#b8e6b8', fontSize: '0.85em', fontFamily: 'monospace', backgroundColor: '#1e2a1e', padding: 1.5, borderRadius: '4px', borderLeft: '3px solid #7cb342' }}>
+                        <Typography variant="caption" sx={{ color: '#7cb342', fontWeight: 'bold' }}>
+                          {log.timestamp} - Model Thinking
+                        </Typography>
+                        <Typography variant="caption" sx={{ display: 'block', color: '#b8e6b8', whiteSpace: 'pre-wrap', wordBreak: 'break-word', marginTop: 0.5, fontStyle: 'italic' }}>
                           {log.message}
                         </Typography>
                       </Box>
