@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { Box, Card, CardContent, Typography, Collapse, Chip, Accordion, AccordionSummary, AccordionDetails } from '@mui/material';
+import React, { useMemo } from 'react';
+import { Box, Card, CardContent, Typography, Chip, Accordion, AccordionSummary, AccordionDetails } from '@mui/material';
 import { ExpandMore } from '@mui/icons-material';
 import { LogEntry } from '../../types/workflow';
 
@@ -8,8 +8,6 @@ interface AgentCardProps {
   status: 'pending' | 'active' | 'completed' | 'error';
   description: string;
   logs?: LogEntry[];
-  expanded?: boolean;
-  onToggle?: (expanded: boolean) => void;
 }
 
 export const AgentCard: React.FC<AgentCardProps> = ({
@@ -17,13 +15,8 @@ export const AgentCard: React.FC<AgentCardProps> = ({
   status,
   description,
   logs = [],
-  expanded: externalExpanded = false,
-  onToggle,
 }) => {
   console.log(`🃏 [AgentCard] ${agentName} - Rendering with status: ${status}, logs: ${logs.length}`);
-
-  const [localExpanded, setLocalExpanded] = useState(externalExpanded);
-  const isExpanded = externalExpanded !== undefined ? externalExpanded : localExpanded;
 
   // Group logs by type
   const groupedLogs = useMemo(() => {
@@ -41,18 +34,6 @@ export const AgentCard: React.FC<AgentCardProps> = ({
     });
     return grouped;
   }, [logs]);
-
-  // Sync external expanded prop with local state for real-time updates
-  useEffect(() => {
-    console.log(`🃏 [AgentCard] ${agentName} - useEffect triggered, externalExpanded: ${externalExpanded}`);
-    setLocalExpanded(externalExpanded);
-  }, [externalExpanded, agentName]);
-
-  const handleToggle = () => {
-    const newState = !isExpanded;
-    setLocalExpanded(newState);
-    onToggle?.(newState);
-  };
 
   const statusColor = {
     pending: '#666',
@@ -72,31 +53,22 @@ export const AgentCard: React.FC<AgentCardProps> = ({
     <Card
       sx={{
         backgroundColor: '#1a1a1a',
-        border: isExpanded ? '2px solid #76B900' : '1px solid #444',
+        border: '2px solid #76B900',
         borderRadius: '8px',
         marginBottom: 2,
         transition: 'all 0.3s ease',
         boxShadow: status === 'active' ? '0 0 15px rgba(118, 185, 0, 0.3)' : 'none',
-        '&:hover': {
-          borderColor: '#76B900',
-        },
       }}
     >
       {/* Header - Always Visible */}
       <Box
-        onClick={handleToggle}
         sx={{
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
           padding: 2,
           backgroundColor: '#2a2a2a',
-          cursor: 'pointer',
           userSelect: 'none',
-          transition: 'background-color 0.3s ease',
-          '&:hover': {
-            backgroundColor: '#333',
-          },
         }}
       >
         {/* Left: Dot + Title */}
@@ -131,7 +103,7 @@ export const AgentCard: React.FC<AgentCardProps> = ({
           </Box>
         </Box>
 
-        {/* Middle: Status Badge */}
+        {/* Status Badge */}
         <Chip
           label={status.toUpperCase()}
           size="small"
@@ -140,22 +112,11 @@ export const AgentCard: React.FC<AgentCardProps> = ({
             color: statusColor[status],
             border: `1px solid ${statusColor[status]}`,
             fontWeight: 'bold',
-            marginRight: 2,
-          }}
-        />
-
-        {/* Right: Toggle Arrow */}
-        <ExpandMore
-          sx={{
-            transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)',
-            transition: 'transform 0.3s ease',
-            color: isExpanded ? '#76B900' : '#888',
           }}
         />
       </Box>
 
-      {/* Body - Collapsible */}
-      <Collapse in={isExpanded} timeout="auto" unmountOnExit>
+      {/* Body - Always Visible */}
         <CardContent sx={{ backgroundColor: '#252525', padding: 2 }}>
           {/* Execution Logs Section */}
           {logs.length > 0 && (
@@ -325,7 +286,6 @@ export const AgentCard: React.FC<AgentCardProps> = ({
             </Box>
           )}
         </CardContent>
-      </Collapse>
     </Card>
   );
 };

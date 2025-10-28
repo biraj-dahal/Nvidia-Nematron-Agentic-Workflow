@@ -88,7 +88,6 @@ export const WorkflowVisualization: React.FC<WorkflowVisualizationProps> = ({
             status={card.status}
             description={card.description}
             logs={card.logs}
-            expanded={card.expanded}
           />
         ))}
       </Box>
