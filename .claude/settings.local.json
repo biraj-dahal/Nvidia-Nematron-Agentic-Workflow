@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c:*)",
+      "Bash(python orchestrator_agent.py:*)",
+      "Bash(timeout:*)",
+      "Bash(python calender_tool.py:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

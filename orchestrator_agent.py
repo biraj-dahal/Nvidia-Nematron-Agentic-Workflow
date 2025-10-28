@@ -6,9 +6,11 @@ Coordinates transcription, calendar management, and intelligent note-taking
 import asyncio
 import json
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import Annotated, Any, Sequence, Optional, List, Dict
 from enum import Enum
+import pytz
+from dateutil import parser as dateparser
 
 from openai import OpenAI
 from langchain_core.runnables import RunnableConfig
@@ -16,7 +18,16 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 from pydantic import BaseModel, Field
 
-from typing import List, Dict, Optional, Any
+# Timezone configuration - Auto-handles EST/EDT
+TIMEZONE = pytz.timezone('America/New_York')
+
+# Attendee email mapping
+ATTENDEE_MAP = {
+    "rahual": "rahual.rai@bison.howard.edu",
+    "kritika": "kritika.pant@bison.howard.edu",
+    "biraj": "biraj.dahal@bison.howard.edu"
+}
+
 # Import your existing calendar tool
 from calender_tool import CalendarAgentTool, CalendarEvent
 from email_tool import GmailAgentTool
@@ -47,6 +58,7 @@ class MeetingAction(BaseModel):
     event_date: Optional[str] = None  # ISO format date if specified
     notes: Optional[str] = None
     duration_minutes: int = 60
+    attendees: Optional[List[str]] = None  # List of attendee names (e.g., ["rahual", "kritika"])
     reasoning: str = ""
 
 
@@ -92,24 +104,80 @@ class MeetingOrchestrator:
     
     def _extract_json(self, text: str) -> str:
         """Extract JSON from text that might contain markdown or other formatting"""
-        # Try to find JSON in code blocks
         import re
-        
+
+        # Remove <think> blocks first
+        text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
+
         # Look for JSON in markdown code blocks
-        json_block_match = re.search(r'```json\s*(\{.*?\}|\[.*?\])\s*```', text, re.DOTALL)
+        json_block_match = re.search(r'```json\s*(\{.*\}|\[.*\])\s*```', text, re.DOTALL)
         if json_block_match:
             return json_block_match.group(1)
-        
+
         # Look for any code block
-        code_block_match = re.search(r'```\s*(\{.*?\}|\[.*?\])\s*```', text, re.DOTALL)
+        code_block_match = re.search(r'```\s*(\{.*\}|\[.*\])\s*```', text, re.DOTALL)
         if code_block_match:
             return code_block_match.group(1)
-        
-        # Look for JSON object or array
-        json_match = re.search(r'(\{.*?\}|\[.*?\])', text, re.DOTALL)
-        if json_match:
-            return json_match.group(1)
-        
+
+        # Look for JSON array or object - find the first complete JSON structure
+        # First try to find arrays with balanced brackets
+        array_start = text.find('[')
+        if array_start != -1:
+            bracket_count = 0
+            in_string = False
+            escape = False
+            for i in range(array_start, len(text)):
+                char = text[i]
+
+                if escape:
+                    escape = False
+                    continue
+
+                if char == '\\':
+                    escape = True
+                    continue
+
+                if char == '"':
+                    in_string = not in_string
+                    continue
+
+                if not in_string:
+                    if char == '[':
+                        bracket_count += 1
+                    elif char == ']':
+                        bracket_count -= 1
+                        if bracket_count == 0:
+                            return text[array_start:i+1]
+
+        # If no array found, try object with balanced braces
+        obj_start = text.find('{')
+        if obj_start != -1:
+            brace_count = 0
+            in_string = False
+            escape = False
+            for i in range(obj_start, len(text)):
+                char = text[i]
+
+                if escape:
+                    escape = False
+                    continue
+
+                if char == '\\':
+                    escape = True
+                    continue
+
+                if char == '"':
+                    in_string = not in_string
+                    continue
+
+                if not in_string:
+                    if char == '{':
+                        brace_count += 1
+                    elif char == '}':
+                        brace_count -= 1
+                        if brace_count == 0:
+                            return text[obj_start:i+1]
+
         return text
     
     async def analyze_transcript(self, state: OrchestratorState, config: RunnableConfig):
@@ -245,27 +313,123 @@ Which calendar events are related? Return ONLY JSON."""
     async def plan_actions(self, state: OrchestratorState, config: RunnableConfig):
         """Decide what actions to take based on the analysis"""
         _LOGGER.info("Planning actions...")
-        
+
+        # Calculate dates for the prompt
+        today = datetime.now(TIMEZONE).date()
+        tomorrow = today + timedelta(days=1)
+        today_str = today.isoformat()
+        tomorrow_str = tomorrow.isoformat()
+
         system_prompt = """You are a meeting action planner. Based on transcript and calendar, decide actions.
 
 Actions available:
 - ADD_NOTES: Add notes to existing event
-- CREATE_EVENT: Create new event with specific date
-- FIND_SLOT: Find available time (9-5) for new event
-- UPDATE_EVENT: Update existing event
+- CREATE_EVENT: Create new calendar event for FUTURE meetings mentioned in transcript
+- FIND_SLOT: Find available time slots (9-5) for reference
+- UPDATE_EVENT: Update existing event details
+
+RULES:
+1. If transcript mentions scheduling/planning a FUTURE meeting → use CREATE_EVENT
+2. For past meetings with discussion points → use ADD_NOTES on related events
+3. Use FIND_SLOT only if you need to find available times (system will auto-use first slot for CREATE_EVENT if needed)
+4. Only create events for FUTURE meetings, never for past discussions
+
+DURATION DETECTION:
+Extract meeting duration from transcript using these patterns:
+- "30-minute meeting" / "30 minute meeting" → 30
+- "1-hour meeting" / "one hour" → 60
+- "2-hour session" / "two hours" → 120
+- "90 minutes" / "ninety minutes" → 90
+- "half hour" / "half an hour" → 30
+- "quick 15-minute sync" → 15
+- "45-min standup" → 45
+- "all-day session" → 480 (8 hours)
+- If no duration mentioned → default to 60 minutes
+
+DATE PARSING (Today is {today_date}):
+Convert natural language dates to YYYY-MM-DD format:
+- "tomorrow" → {tomorrow_date}
+- "next Monday/Tuesday/etc" → find next occurrence of that weekday
+- "next week" → 7 days from today
+- "in 3 days" → today + 3 days
+- "this Friday" → upcoming Friday
+- "November 5th" / "Nov 5" → 2025-11-05
+- If no date mentioned → use next available business day
+
+Always output event_date in YYYY-MM-DD format.
+
+ATTENDEE EXTRACTION:
+Extract attendee names from transcript and map to lowercase keys:
+- "Rahual" / "Rahual Rai" → ["rahual"]
+- "Kritika" / "Kritika Pant" → ["kritika"]
+- "Biraj" / "Biraj Dahal" → ["biraj"]
+- "Rahual and Kritika" → ["rahual", "kritika"]
+- "with the team" → ["rahual", "kritika", "biraj"]
+- If no attendees mentioned → null or empty array
+
+System will auto-convert names to email addresses.
 
 Return ONLY JSON array (no other text):
+
+Example 1 - Add notes to past meeting:
 [
-    {
+    {{
         "action_type": "ADD_NOTES",
         "calendar_event_id": "event_id_here",
-        "notes": "Meeting notes to add",
-        "reasoning": "Why this action"
-    }
+        "notes": "Follow-up: John to prepare specs, Sarah handles budget",
+        "reasoning": "Document action items from follow-up discussion"
+    }}
 ]
 
-If no actions needed, return empty array: []"""
-        
+Example 2 - Create future meeting with duration and attendees:
+[
+    {{
+        "action_type": "CREATE_EVENT",
+        "event_title": "Project Phoenix Planning Session",
+        "event_date": "2025-11-05",
+        "duration_minutes": 120,
+        "attendees": ["rahual", "kritika"],
+        "notes": "Q4 roadmap planning",
+        "reasoning": "Transcript requests scheduling a 2-hour planning meeting next week with Rahual and Kritika"
+    }}
+]
+
+Example 3 - Short meeting with team:
+[
+    {{
+        "action_type": "CREATE_EVENT",
+        "event_title": "Quick Standup",
+        "event_date": "2025-10-30",
+        "duration_minutes": 30,
+        "attendees": ["rahual", "kritika", "biraj"],
+        "notes": "Daily sync",
+        "reasoning": "Transcript mentions '30-minute standup tomorrow with the team'"
+    }}
+]
+
+Example 4 - Both actions:
+[
+    {{
+        "action_type": "ADD_NOTES",
+        "calendar_event_id": "abc123",
+        "notes": "Action items assigned",
+        "reasoning": "Document current meeting outcomes"
+    }},
+    {{
+        "action_type": "CREATE_EVENT",
+        "event_title": "Follow-up Meeting",
+        "event_date": "2025-11-01",
+        "duration_minutes": 60,
+        "notes": "Review progress on action items",
+        "reasoning": "Schedule follow-up meeting as discussed (no duration specified, using default 60 min)"
+    }}
+]
+
+If no actions needed, return empty array: []""".format(
+            today_date=today_str,
+            tomorrow_date=tomorrow_str
+        )
+
         context = {
             "transcript": state.audio_transcript[:800],
             "related_meetings": state.related_past_meetings[:3],
@@ -287,11 +451,30 @@ What actions should be taken? Return ONLY JSON."""
             json_str = self._extract_json(response)
             _LOGGER.info(f"Actions JSON: {json_str[:200]}")
             actions_data = json.loads(json_str)
-            
-            # Ensure it's a list
+
+            # Ensure it's a list - if single object, wrap in list
             if not isinstance(actions_data, list):
-                actions_data = []
-            
+                if isinstance(actions_data, dict):
+                    actions_data = [actions_data]
+                    _LOGGER.info("Wrapped single action object in array")
+                else:
+                    actions_data = []
+
+            # Normalize action types from uppercase to expected lowercase format
+            action_type_mapping = {
+                "ADD_NOTES": "add_notes",
+                "CREATE_EVENT": "create_event",
+                "FIND_SLOT": "find_available_slot",
+                "UPDATE_EVENT": "update_event"
+            }
+
+            for action in actions_data:
+                if "action_type" in action:
+                    original_type = action["action_type"]
+                    if original_type in action_type_mapping:
+                        action["action_type"] = action_type_mapping[original_type]
+                        _LOGGER.info(f"Normalized action type: {original_type} -> {action['action_type']}")
+
             actions = [MeetingAction(**action) for action in actions_data]
             state.planned_actions = actions
             _LOGGER.info(f"Planned {len(actions)} actions")
@@ -303,14 +486,19 @@ What actions should be taken? Return ONLY JSON."""
             return state
     
     async def execute_actions(self, state: OrchestratorState, config: RunnableConfig):
-        """Execute the planned actions"""
+        """Execute the planned actions in two phases: FIND_SLOT first, then others"""
         _LOGGER.info("Executing planned actions...")
-        
+
         results = []
-        
+        available_slots = []
+
+        # Phase 1: Execute FIND_SLOT and ADD_NOTES actions first
         for action in state.planned_actions:
+            if action.action_type not in [ActionType.FIND_SLOT, ActionType.ADD_NOTES, ActionType.UPDATE_EVENT]:
+                continue
+
             _LOGGER.info(f"Executing action: {action.action_type}")
-            
+
             try:
                 if action.action_type == ActionType.FIND_SLOT:
                     # Find available time slot
@@ -319,64 +507,130 @@ What actions should be taken? Return ONLY JSON."""
                         days_ahead=14,
                         max_slots=3
                     )
-                    
+
                     if slots:
+                        available_slots = slots  # Store for CREATE_EVENT to use
                         result = f"Found {len(slots)} available slots:\n"
                         for slot in slots:
                             result += f"  - {slot.start} ({slot.duration_minutes} min)\n"
                         results.append(result)
                     else:
                         results.append("No available slots found in the next 14 days")
-                
+
                 elif action.action_type == ActionType.ADD_NOTES:
                     result = self.calendar_tool.add_notes_to_event(
                         action.calendar_event_id, action.notes
                     )
                     results.append(result)
-                
-                elif action.action_type == ActionType.CREATE_EVENT:
-                    if action.event_date:
-                        start_time = f"{action.event_date}T09:00:00Z"
-                        end_time = f"{action.event_date}T10:00:00Z"
-                    else:
-                        # fallback: first available slot
-                        slot = self.calendar_tool.find_available_slots(
-                            duration_minutes=action.duration_minutes,
-                            days_ahead=14,
-                            max_slots=1
-                        )[0]
-                        start_time, end_time = slot.start, slot.end
 
-                    event_id = self.calendar_tool.create_event(
-                        title=action.event_title or "New Meeting",
-                        start_time=start_time,
-                        end_time=end_time,
-                        description=action.notes or ""
-                    )
-                    result = f"Created new event '{action.event_title}' on {start_time} (ID: {event_id})"
-                    results.append(result)
                 elif action.action_type == ActionType.UPDATE_EVENT:
                     event_id = action.calendar_event_id
                     updates = {"description": action.notes or "Updated notes"}
                     self.calendar_tool.update_event(event_id, updates)
                     result = f"Updated event {event_id} with new notes."
                     results.append(result)
-                
+
             except Exception as e:
                 error_msg = f"Error executing {action.action_type}: {str(e)}"
                 _LOGGER.error(error_msg)
                 results.append(error_msg)
-        
+
+        # Phase 2: Execute CREATE_EVENT actions (can now use available_slots)
+        for action in state.planned_actions:
+            if action.action_type != ActionType.CREATE_EVENT:
+                continue
+
+            _LOGGER.info(f"Executing action: {action.action_type}")
+
+            try:
+                # Determine start and end times
+                if action.event_date:
+                    # Date provided, find first available slot on that date
+                    target_date = action.event_date  # Format: "2025-11-05"
+
+                    # Try to find available slot on specific date
+                    slots_on_date = self.calendar_tool.find_available_slots(
+                        duration_minutes=action.duration_minutes,
+                        days_ahead=14,
+                        max_slots=10
+                    )
+
+                    # Filter for the target date
+                    matching_slots = [s for s in slots_on_date if s.start.startswith(target_date)]
+
+                    if matching_slots:
+                        slot = matching_slots[0]  # Use first available on that day
+                        start_time, end_time = slot.start, slot.end
+                        _LOGGER.info(f"Using first available slot on {target_date}: {start_time}")
+                    else:
+                        # No slots on specific date, use default afternoon time
+                        # Create timezone-aware datetime for 2 PM EST/EDT
+                        target_dt = datetime.strptime(target_date, "%Y-%m-%d")
+                        start_dt = TIMEZONE.localize(target_dt.replace(hour=14, minute=0, second=0))
+                        end_dt = start_dt + timedelta(minutes=action.duration_minutes)
+                        start_time = start_dt.isoformat()
+                        end_time = end_dt.isoformat()
+                        _LOGGER.info(f"No free slots on {target_date}, using default 2 PM EST/EDT: {start_time}")
+                else:
+                    # No date provided, use first available slot from any available slots
+                    if available_slots:
+                        slot = available_slots[0]
+                        start_time, end_time = slot.start, slot.end
+                        _LOGGER.info(f"Using first available slot: {start_time}")
+                    else:
+                        # Find a slot now
+                        slots = self.calendar_tool.find_available_slots(
+                            duration_minutes=action.duration_minutes,
+                            days_ahead=14,
+                            max_slots=1
+                        )
+                        if slots:
+                            start_time, end_time = slots[0].start, slots[0].end
+                            _LOGGER.info(f"Found and using slot: {start_time}")
+                        else:
+                            results.append(f"Cannot create event '{action.event_title}': No available slots found")
+                            continue
+
+                # Map attendee names to email addresses
+                attendee_emails = None
+                if action.attendees:
+                    attendee_emails = []
+                    for name in action.attendees:
+                        name_lower = name.lower()
+                        if name_lower in ATTENDEE_MAP:
+                            attendee_emails.append(ATTENDEE_MAP[name_lower])
+                            _LOGGER.info(f"Mapped attendee '{name}' to {ATTENDEE_MAP[name_lower]}")
+                        else:
+                            _LOGGER.warning(f"Unknown attendee name: {name}")
+
+                event_id = self.calendar_tool.create_event(
+                    title=action.event_title or "New Meeting",
+                    start_time=start_time,
+                    end_time=end_time,
+                    description=action.notes or "",
+                    attendees=attendee_emails
+                )
+
+                attendee_info = f" with {len(attendee_emails)} attendees" if attendee_emails else ""
+                result = f"Created new event '{action.event_title}' on {start_time}{attendee_info} (ID: {event_id})"
+                results.append(result)
+                _LOGGER.info(result)
+
+            except Exception as e:
+                error_msg = f"Error executing {action.action_type}: {str(e)}"
+                _LOGGER.error(error_msg)
+                results.append(error_msg)
+
         state.execution_results = results
         return state
     
     async def generate_summary(self, state: OrchestratorState, config: RunnableConfig):
         """Generate a final summary of what was done"""
         _LOGGER.info("Generating final summary...")
-        
-        system_prompt = """You are a meeting assistant. Create a concise summary of what actions 
+
+        system_prompt = """You are a meeting assistant. Create a concise summary of what actions
 were taken based on the meeting transcript. Be specific and actionable."""
-        
+
         context = {
             "transcript_preview": state.audio_transcript[:500],
             "actions_taken": [
@@ -388,25 +642,112 @@ were taken based on the meeting transcript. Be specific and actionable."""
             ],
             "results": state.execution_results
         }
-        
+
         user_prompt = f"""Generate a summary of the meeting and actions taken:
 
 {json.dumps(context, indent=2)}"""
-        
+
         summary = self._call_nemotron(system_prompt, user_prompt)
-        self.email_tool.send_email(
-        to_addresses=["rahual.rai@bison.howard.edu", "kritika.pant@bisom.howard.edu", "biraj.dahal@bison.howard.edu"],
-        subject="AI Meeting Summary: " + datetime.now().strftime("%Y-%m-%d"),
-        body=summary
-        )
-        _LOGGER.info("Summary email sent successfully.")
-        
+
+        # Create HTML formatted version
+        html_summary = self._create_html_summary(summary, state)
+
+        # Try to send email, but don't fail if permissions are insufficient
+        try:
+            self.email_tool.send_email(
+                to_addresses=["rahual.rai@bison.howard.edu", "kritika.pant@bison.howard.edu", "biraj.dahal@bison.howard.edu"],
+                subject="AI Meeting Summary: " + datetime.now(TIMEZONE).strftime("%Y-%m-%d %I:%M %p %Z"),
+                body=summary,
+                html_body=html_summary
+            )
+            _LOGGER.info("Summary email sent successfully.")
+        except Exception as e:
+            _LOGGER.warning(f"Failed to send email: {e}")
+            _LOGGER.warning("Continuing workflow without sending email.")
+
         state.messages.append({
             "role": "assistant",
             "content": f"Summary:\n{summary}"
         })
-        
+
         return state
+
+    def _create_html_summary(self, summary: str, state: OrchestratorState) -> str:
+        """Create HTML formatted email summary"""
+
+        # Build actions table
+        actions_html = ""
+        for i, action in enumerate(state.planned_actions, 1):
+            action_badge = {
+                "add_notes": "🗒️ Add Notes",
+                "create_event": "📅 Create Event",
+                "find_available_slot": "🔍 Find Slot",
+                "update_event": "✏️ Update Event"
+            }.get(action.action_type, action.action_type)
+
+            actions_html += f"""
+            <tr style="background-color: {'#f9f9f9' if i % 2 == 0 else 'white'};">
+                <td style="padding: 12px; border: 1px solid #ddd;">{action_badge}</td>
+                <td style="padding: 12px; border: 1px solid #ddd;">{action.event_title or 'N/A'}</td>
+                <td style="padding: 12px; border: 1px solid #ddd;">{action.reasoning}</td>
+            </tr>
+            """
+
+        # Build results list
+        results_html = ""
+        for result in state.execution_results:
+            results_html += f'<li style="margin-bottom: 8px;">{result}</li>'
+
+        html = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        </head>
+        <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 800px; margin: 0 auto; padding: 20px;">
+            <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; border-radius: 10px; margin-bottom: 30px;">
+                <h1 style="margin: 0; font-size: 28px;">🤖 AI Meeting Summary</h1>
+                <p style="margin: 10px 0 0 0; opacity: 0.9;">{datetime.now(TIMEZONE).strftime("%B %d, %Y at %I:%M %p %Z")}</p>
+            </div>
+
+            <div style="background: #f5f5f5; padding: 20px; border-radius: 8px; margin-bottom: 25px;">
+                <h2 style="margin-top: 0; color: #667eea;">📝 Summary</h2>
+                <p style="white-space: pre-wrap;">{summary}</p>
+            </div>
+
+            <div style="margin-bottom: 25px;">
+                <h2 style="color: #667eea;">🎯 Actions Planned</h2>
+                <table style="width: 100%; border-collapse: collapse; margin-top: 15px;">
+                    <thead>
+                        <tr style="background-color: #667eea; color: white;">
+                            <th style="padding: 12px; text-align: left; border: 1px solid #667eea;">Action</th>
+                            <th style="padding: 12px; text-align: left; border: 1px solid #667eea;">Details</th>
+                            <th style="padding: 12px; text-align: left; border: 1px solid #667eea;">Reasoning</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {actions_html}
+                    </tbody>
+                </table>
+            </div>
+
+            <div style="margin-bottom: 25px;">
+                <h2 style="color: #667eea;">✅ Execution Results</h2>
+                <ul style="background: #f9f9f9; padding: 20px 40px; border-radius: 8px;">
+                    {results_html}
+                </ul>
+            </div>
+
+            <div style="text-align: center; padding: 20px; color: #999; font-size: 12px; border-top: 1px solid #ddd;">
+                <p>Generated by NVIDIA Nemotron AI Meeting Orchestrator</p>
+                <p>Powered by LangGraph & Google Calendar API</p>
+            </div>
+        </body>
+        </html>
+        """
+
+        return html
 
 
 # Build the LangGraph workflow

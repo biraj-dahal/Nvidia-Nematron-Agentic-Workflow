@@ -7,19 +7,23 @@ Supports fetching events, finding available slots, and date range queries
 import os
 import pickle
 from datetime import datetime, timedelta, timezone
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 from dataclasses import dataclass
+import pytz
 
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
-import os
-import pickle
-from datetime import datetime, timedelta, timezone
-from typing import List, Dict, Optional, Any  # ← Add Any here
-# Scopes required for calendar access
-SCOPES = ['https://www.googleapis.com/auth/calendar']
+
+# Scopes required for calendar and Gmail access
+SCOPES = [
+    'https://www.googleapis.com/auth/calendar',
+    'https://www.googleapis.com/auth/gmail.send'
+]
+
+# Timezone configuration - Auto-handles EST/EDT
+TIMEZONE = pytz.timezone('America/New_York')
 
 CALEN_ID = '1e48c44c1ad2d312b31ee14323a2fc98c71147e7d43450be5210b88638c75384@group.calendar.google.com'
 @dataclass
@@ -167,8 +171,8 @@ class CalendarAgentTool:
         event = {
             'summary': title,
             'description': description,
-            'start': {'dateTime': start_time, 'timeZone': 'UTC'},
-            'end': {'dateTime': end_time, 'timeZone': 'UTC'},
+            'start': {'dateTime': start_time, 'timeZone': 'America/New_York'},
+            'end': {'dateTime': end_time, 'timeZone': 'America/New_York'},
         }
         if attendees:
             event['attendees'] = [{'email': email} for email in attendees]
@@ -236,26 +240,24 @@ class CalendarAgentTool:
         work_end_hour, work_end_min = map(int, working_hours_end.split(':'))
         
         available_slots = []
-        current_date = datetime.now(timezone.utc).date()
-        
+        current_date = datetime.now(TIMEZONE).date()
+
         for day_offset in range(days_ahead):
             check_date = current_date + timedelta(days=day_offset)
-            
+
             # Skip weekends if requested
             if skip_weekends and check_date.weekday() >= 5:  # Saturday = 5, Sunday = 6
                 continue
-            
+
             # Create working day boundaries
-            day_start = datetime.combine(
-                check_date, 
-                datetime.min.time().replace(hour=work_start_hour, minute=work_start_min),
-                tzinfo=timezone.utc
-            )
-            day_end = datetime.combine(
-                check_date, 
-                datetime.min.time().replace(hour=work_end_hour, minute=work_end_min),
-                tzinfo=timezone.utc
-            )
+            day_start = TIMEZONE.localize(datetime.combine(
+                check_date,
+                datetime.min.time().replace(hour=work_start_hour, minute=work_start_min)
+            ))
+            day_end = TIMEZONE.localize(datetime.combine(
+                check_date,
+                datetime.min.time().replace(hour=work_end_hour, minute=work_end_min)
+            ))
             
             # Get events for this day
             day_events = []
