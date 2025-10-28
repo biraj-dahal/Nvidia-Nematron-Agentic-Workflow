@@ -1,0 +1,83 @@
+/* NVIDIA Color Variables for easy theme changes */
+:root {
+    --nvidia-green: #76B900;
+    --dark-background: #000000;
+    --light-text: #FFFFFF;
+    --font-family: 'Roboto', 'Arial', sans-serif;
+    --stop-color: #E63946; /* A contrasting color for the stop button (e.g., red) */
+}
+
+body {
+    background-color: var(--dark-background);
+    color: var(--light-text);
+    font-family: var(--font-family);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+    margin: 0;
+}
+
+.container {
+    text-align: center;
+    padding: 40px;
+}
+
+/* Styling for the Title "xyz" */
+.title-xyz {
+    font-size: 4em;
+    margin-bottom: 30px;
+    letter-spacing: 5px;
+    text-shadow: 0 0 15px rgba(118, 185, 0, 0.5); 
+}
+
+/* Base button styling */
+.nvidia-button {
+    border: none;
+    padding: 15px 35px;
+    font-size: 1.2em;
+    font-weight: bold;
+    cursor: pointer;
+    border-radius: 5px;
+    transition: background-color 0.3s ease, box-shadow 0.3s ease;
+    text-transform: uppercase;
+    margin: 10px; /* Add margin to separate buttons if both are visible */
+}
+
+/* Start Button (Green Theme) */
+#startButton {
+    background-color: var(--nvidia-green);
+    color: var(--dark-background);
+}
+#startButton:hover {
+    background-color: #92e000;
+    box-shadow: 0 0 20px var(--nvidia-green);
+}
+#startButton:active {
+    transform: translateY(1px);
+}
+
+/* Stop Button (Contrasting Theme) */
+#stopButton {
+    background-color: var(--stop-color);
+    color: var(--light-text);
+}
+#stopButton:hover {
+    background-color: #FF6B81;
+    box-shadow: 0 0 20px var(--stop-color);
+}
+#stopButton:active {
+    transform: translateY(1px);
+}
+
+/* Utility Class to hide elements */
+.hidden {
+    display: none !important;
+}
+
+/* Status Message Style */
+.status-message {
+    margin-top: 20px;
+    font-size: 1.1em;
+    color: var(--nvidia-green); /* Use the accent color for status */
+}
