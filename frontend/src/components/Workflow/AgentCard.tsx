@@ -1,11 +1,13 @@
-import React, { useState, useEffect } from 'react';
-import { Box, Card, CardContent, Typography, Collapse, Chip } from '@mui/material';
+import React, { useState, useEffect, useMemo } from 'react';
+import { Box, Card, CardContent, Typography, Collapse, Chip, Accordion, AccordionSummary, AccordionDetails } from '@mui/material';
 import { ExpandMore } from '@mui/icons-material';
+import { LogEntry } from '../../types/workflow';
 
 interface AgentCardProps {
   agentName: string;
   status: 'pending' | 'active' | 'completed' | 'error';
   description: string;
+  logs?: LogEntry[];
   expanded?: boolean;
   onToggle?: (expanded: boolean) => void;
 }
@@ -14,16 +16,36 @@ export const AgentCard: React.FC<AgentCardProps> = ({
   agentName,
   status,
   description,
+  logs = [],
   expanded: externalExpanded = false,
   onToggle,
 }) => {
+  console.log(`🃏 [AgentCard] ${agentName} - Rendering with status: ${status}, logs: ${logs.length}`);
+
   const [localExpanded, setLocalExpanded] = useState(externalExpanded);
   const isExpanded = externalExpanded !== undefined ? externalExpanded : localExpanded;
 
+  // Group logs by type
+  const groupedLogs = useMemo(() => {
+    const grouped: Record<string, LogEntry[]> = {
+      input: [],
+      processing: [],
+      api_call: [],
+      output: [],
+      timing: [],
+      error: [],
+    };
+    logs.forEach(log => {
+      grouped[log.type].push(log);
+    });
+    return grouped;
+  }, [logs]);
+
   // Sync external expanded prop with local state for real-time updates
   useEffect(() => {
+    console.log(`🃏 [AgentCard] ${agentName} - useEffect triggered, externalExpanded: ${externalExpanded}`);
     setLocalExpanded(externalExpanded);
-  }, [externalExpanded]);
+  }, [externalExpanded, agentName]);
 
   const handleToggle = () => {
     const newState = !isExpanded;
@@ -134,6 +156,7 @@ export const AgentCard: React.FC<AgentCardProps> = ({
       {/* Body - Collapsible */}
       <Collapse in={isExpanded} timeout="auto" unmountOnExit>
         <CardContent sx={{ backgroundColor: '#252525', padding: 2 }}>
+          {/* Status Details Section */}
           <Typography variant="caption" sx={{ color: '#76B900', fontWeight: 'bold', fontSize: '0.8em', display: 'block', marginBottom: 1, textTransform: 'uppercase' }}>
             Status Details
           </Typography>
@@ -148,10 +171,158 @@ export const AgentCard: React.FC<AgentCardProps> = ({
               lineHeight: 1.6,
               whiteSpace: 'pre-wrap',
               wordBreak: 'break-word',
+              marginBottom: 2,
             }}
           >
             {description || 'No details available'}
           </Box>
+
+          {/* Execution Logs Section */}
+          {logs.length > 0 && (
+            <Box>
+              <Typography variant="caption" sx={{ color: '#76B900', fontWeight: 'bold', fontSize: '0.8em', display: 'block', marginBottom: 1, textTransform: 'uppercase' }}>
+                Execution Logs ({logs.length})
+              </Typography>
+
+              {/* Input Logs */}
+              {groupedLogs.input.length > 0 && (
+                <Accordion defaultExpanded={false} sx={{ backgroundColor: '#2a2a2a', marginBottom: 1 }}>
+                  <AccordionSummary expandIcon={<ExpandMore />} sx={{ color: '#76B900' }}>
+                    📥 Input ({groupedLogs.input.length})
+                  </AccordionSummary>
+                  <AccordionDetails sx={{ backgroundColor: '#1a1a1a', padding: 1.5 }}>
+                    {groupedLogs.input.map((log, idx) => (
+                      <Box key={idx} sx={{ marginBottom: 1, color: '#ccc', fontSize: '0.85em', fontFamily: 'monospace' }}>
+                        <Typography variant="caption" sx={{ color: '#aaa' }}>
+                          {log.timestamp}
+                        </Typography>
+                        <Typography variant="caption" sx={{ display: 'block', color: '#ccc', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                          {log.message}
+                        </Typography>
+                      </Box>
+                    ))}
+                  </AccordionDetails>
+                </Accordion>
+              )}
+
+              {/* Processing Logs */}
+              {groupedLogs.processing.length > 0 && (
+                <Accordion defaultExpanded={true} sx={{ backgroundColor: '#2a2a2a', marginBottom: 1 }}>
+                  <AccordionSummary expandIcon={<ExpandMore />} sx={{ color: '#76B900' }}>
+                    ⚙️ Processing ({groupedLogs.processing.length})
+                  </AccordionSummary>
+                  <AccordionDetails sx={{ backgroundColor: '#1a1a1a', padding: 1.5 }}>
+                    {groupedLogs.processing.map((log, idx) => (
+                      <Box key={idx} sx={{ marginBottom: 1, color: '#ccc', fontSize: '0.85em', fontFamily: 'monospace' }}>
+                        <Typography variant="caption" sx={{ color: '#aaa' }}>
+                          {log.timestamp}
+                        </Typography>
+                        <Typography variant="caption" sx={{ display: 'block', color: '#ccc', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                          {log.message}
+                        </Typography>
+                      </Box>
+                    ))}
+                  </AccordionDetails>
+                </Accordion>
+              )}
+
+              {/* API Call Logs */}
+              {groupedLogs.api_call.length > 0 && (
+                <Accordion defaultExpanded={true} sx={{ backgroundColor: '#2a2a2a', marginBottom: 1 }}>
+                  <AccordionSummary expandIcon={<ExpandMore />} sx={{ color: '#76B900' }}>
+                    🤖 API Calls ({groupedLogs.api_call.length})
+                  </AccordionSummary>
+                  <AccordionDetails sx={{ backgroundColor: '#1a1a1a', padding: 1.5 }}>
+                    {groupedLogs.api_call.map((log, idx) => (
+                      <Box key={idx} sx={{ marginBottom: 1.5, color: '#ccc', fontSize: '0.85em', fontFamily: 'monospace', borderBottom: '1px solid #333', paddingBottom: 1 }}>
+                        <Typography variant="caption" sx={{ color: '#aaa' }}>
+                          {log.timestamp}
+                        </Typography>
+                        <Typography variant="caption" sx={{ display: 'block', color: '#ccc', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                          {log.message}
+                        </Typography>
+                        {log.metadata && (
+                          <Box sx={{ marginTop: 0.5, color: '#999', fontSize: '0.8em' }}>
+                            {log.metadata.model && <Typography variant="caption" sx={{ display: 'block' }}>Model: {log.metadata.model}</Typography>}
+                            {log.metadata.tokens && <Typography variant="caption" sx={{ display: 'block' }}>Tokens: {log.metadata.tokens}</Typography>}
+                            {log.metadata.latency_ms && <Typography variant="caption" sx={{ display: 'block' }}>Latency: {log.metadata.latency_ms}ms</Typography>}
+                          </Box>
+                        )}
+                      </Box>
+                    ))}
+                  </AccordionDetails>
+                </Accordion>
+              )}
+
+              {/* Output Logs */}
+              {groupedLogs.output.length > 0 && (
+                <Accordion defaultExpanded={false} sx={{ backgroundColor: '#2a2a2a', marginBottom: 1 }}>
+                  <AccordionSummary expandIcon={<ExpandMore />} sx={{ color: '#76B900' }}>
+                    📤 Output ({groupedLogs.output.length})
+                  </AccordionSummary>
+                  <AccordionDetails sx={{ backgroundColor: '#1a1a1a', padding: 1.5 }}>
+                    {groupedLogs.output.map((log, idx) => (
+                      <Box key={idx} sx={{ marginBottom: 1, color: '#ccc', fontSize: '0.85em', fontFamily: 'monospace' }}>
+                        <Typography variant="caption" sx={{ color: '#aaa' }}>
+                          {log.timestamp}
+                        </Typography>
+                        <Typography variant="caption" sx={{ display: 'block', color: '#ccc', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                          {log.message}
+                        </Typography>
+                      </Box>
+                    ))}
+                  </AccordionDetails>
+                </Accordion>
+              )}
+
+              {/* Timing Logs */}
+              {groupedLogs.timing.length > 0 && (
+                <Accordion defaultExpanded={false} sx={{ backgroundColor: '#2a2a2a', marginBottom: 1 }}>
+                  <AccordionSummary expandIcon={<ExpandMore />} sx={{ color: '#76B900' }}>
+                    ⏱️ Timing ({groupedLogs.timing.length})
+                  </AccordionSummary>
+                  <AccordionDetails sx={{ backgroundColor: '#1a1a1a', padding: 1.5 }}>
+                    {groupedLogs.timing.map((log, idx) => (
+                      <Box key={idx} sx={{ marginBottom: 1, color: '#ccc', fontSize: '0.85em', fontFamily: 'monospace' }}>
+                        <Typography variant="caption" sx={{ color: '#aaa' }}>
+                          {log.timestamp}
+                        </Typography>
+                        <Typography variant="caption" sx={{ display: 'block', color: '#ccc', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                          {log.message}
+                        </Typography>
+                        {log.metadata?.duration_ms && (
+                          <Typography variant="caption" sx={{ display: 'block', color: '#999', marginTop: 0.5 }}>
+                            Duration: {log.metadata.duration_ms}ms
+                          </Typography>
+                        )}
+                      </Box>
+                    ))}
+                  </AccordionDetails>
+                </Accordion>
+              )}
+
+              {/* Error Logs */}
+              {groupedLogs.error.length > 0 && (
+                <Accordion defaultExpanded={true} sx={{ backgroundColor: '#2a2a2a', marginBottom: 1 }}>
+                  <AccordionSummary expandIcon={<ExpandMore />} sx={{ color: '#F44336' }}>
+                    ⚠️ Errors ({groupedLogs.error.length})
+                  </AccordionSummary>
+                  <AccordionDetails sx={{ backgroundColor: '#1a1a1a', padding: 1.5 }}>
+                    {groupedLogs.error.map((log, idx) => (
+                      <Box key={idx} sx={{ marginBottom: 1, color: '#ff6b6b', fontSize: '0.85em', fontFamily: 'monospace' }}>
+                        <Typography variant="caption" sx={{ color: '#aaa' }}>
+                          {log.timestamp}
+                        </Typography>
+                        <Typography variant="caption" sx={{ display: 'block', color: '#ff6b6b', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                          {log.message}
+                        </Typography>
+                      </Box>
+                    ))}
+                  </AccordionDetails>
+                </Accordion>
+              )}
+            </Box>
+          )}
         </CardContent>
       </Collapse>
     </Card>

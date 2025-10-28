@@ -336,8 +336,24 @@ class MeetingOrchestrator:
     
     async def analyze_transcript(self, state: OrchestratorState, config: RunnableConfig):
         """Analyze the transcript to understand meeting context"""
+        import time
         _LOGGER.info("Analyzing transcript for meeting context...")
-        emit_workflow_event("stage_start", "Transcript Analyzer", {"description": "Analyzing meeting transcript..."})
+
+        # Initialize logs
+        logs = [
+            {
+                "type": "processing",
+                "timestamp": datetime.now(TIMEZONE).strftime("%H:%M:%S"),
+                "message": "Starting transcript analysis..."
+            },
+            {
+                "type": "input",
+                "timestamp": datetime.now(TIMEZONE).strftime("%H:%M:%S"),
+                "message": f"Transcript length: {len(state.audio_transcript)} characters"
+            }
+        ]
+
+        emit_workflow_event("stage_start", "Transcript Analyzer", {"description": "Analyzing meeting transcript..."}, logs)
 
         system_prompt = """You are an expert meeting analyst. Extract key information from meeting transcripts.
 
@@ -362,8 +378,23 @@ Respond ONLY with valid JSON in exactly this format (no other text):
 }"""
 
         user_prompt = f"Analyze this meeting transcript and return ONLY JSON (remove filler words, extract dates and names clearly):\n\n{state.audio_transcript}"
-        
+
+        # Track API call timing
+        start_time = time.time()
         response = self._call_nemotron(system_prompt, user_prompt, json_mode=True)
+        api_duration_ms = int((time.time() - start_time) * 1000)
+
+        # Add API call log
+        logs.append({
+            "type": "api_call",
+            "timestamp": datetime.now(TIMEZONE).strftime("%H:%M:%S"),
+            "message": f"Nemotron API call completed",
+            "metadata": {
+                "model": "nvidia/llama-3.3-nemotron-super-49b-v1.5",
+                "latency_ms": api_duration_ms
+            }
+        })
+
         _LOGGER.info(f"Raw response from Nemotron:\n{response}\n")
         
         try:
@@ -371,14 +402,21 @@ Respond ONLY with valid JSON in exactly this format (no other text):
             json_str = self._extract_json(response)
             _LOGGER.info(f"Extracted JSON: {json_str[:200]}...")
             analysis = json.loads(json_str)
-            
+
+            # Add output logs
+            logs.append({
+                "type": "output",
+                "timestamp": datetime.now(TIMEZONE).strftime("%H:%M:%S"),
+                "message": f"Analysis complete: {len(analysis.get('key_topics', []))} topics, {len(analysis.get('action_items', []))} action items"
+            })
+
             # Update state directly
             state.messages.append({
                 "role": "assistant",
                 "content": f"Meeting Analysis: {json.dumps(analysis, indent=2)}"
             })
             # Don't return analysis, just update messages
-            emit_workflow_event("stage_complete", "Transcript Analyzer", {"status": "success"})
+            emit_workflow_event("stage_complete", "Transcript Analyzer", {"status": "success"}, logs)
             return state
         except (json.JSONDecodeError, Exception) as e:
             _LOGGER.error(f"Failed to parse analysis JSON: {e}")
@@ -404,20 +442,57 @@ Respond ONLY with valid JSON in exactly this format (no other text):
     async def fetch_calendar_context(self, state: OrchestratorState, config: RunnableConfig):
         """Fetch relevant calendar events"""
         _LOGGER.info("Fetching calendar events...")
-        emit_workflow_event("stage_start", "Calendar Context Fetch", {"description": "Fetching calendar events..."})
+
+        logs = [
+            {
+                "type": "processing",
+                "timestamp": datetime.now(TIMEZONE).strftime("%H:%M:%S"),
+                "message": "Starting calendar context fetch..."
+            },
+            {
+                "type": "input",
+                "timestamp": datetime.now(TIMEZONE).strftime("%H:%M:%S"),
+                "message": "Fetching events from past 30 days and next 30 days"
+            }
+        ]
+
+        emit_workflow_event("stage_start", "Calendar Context Fetch", {"description": "Fetching calendar events..."}, logs)
 
         # Get events from past 30 days and next 30 days
         events = self.calendar_tool.fetch_events(days_ahead=30, days_back=30, max_results=50)
         state.calendar_events = events
 
         _LOGGER.info(f"Found {len(events)} calendar events")
-        emit_workflow_event("stage_complete", "Calendar Context Fetch", {"status": "success"})
+
+        # Add output logs
+        logs.append({
+            "type": "output",
+            "timestamp": datetime.now(TIMEZONE).strftime("%H:%M:%S"),
+            "message": f"Calendar fetch complete: found {len(events)} events"
+        })
+
+        emit_workflow_event("stage_complete", "Calendar Context Fetch", {"status": "success"}, logs)
         return state
     
     async def find_related_meetings(self, state: OrchestratorState, config: RunnableConfig):
         """Use Nemotron to find related past meetings"""
+        import time
         _LOGGER.info("Finding related past meetings...")
-        emit_workflow_event("stage_start", "Related Meetings Finder", {"description": "Finding related past meetings..."})
+
+        logs = [
+            {
+                "type": "processing",
+                "timestamp": datetime.now(TIMEZONE).strftime("%H:%M:%S"),
+                "message": "Starting related meetings search..."
+            },
+            {
+                "type": "input",
+                "timestamp": datetime.now(TIMEZONE).strftime("%H:%M:%S"),
+                "message": f"Analyzing {len(state.calendar_events)} calendar events"
+            }
+        ]
+
+        emit_workflow_event("stage_start", "Related Meetings Finder", {"description": "Finding related past meetings..."}, logs)
 
         # Get the analysis from messages
         analysis_msg = state.messages[-1] if state.messages else {}
@@ -425,7 +500,7 @@ Respond ONLY with valid JSON in exactly this format (no other text):
             analysis = analysis_msg.get('content', '{}')
         else:
             analysis = getattr(analysis_msg, 'content', '{}')
-        
+
         # Create a summary of calendar events for context
         events_summary = []
         for event in state.calendar_events[:20]:  # Limit to 20 events
@@ -435,8 +510,8 @@ Respond ONLY with valid JSON in exactly this format (no other text):
                 "start": event.start,
                 "description": (event.description or "")[:100]  # Truncate descriptions
             })
-        
-        system_prompt = """You are an expert at finding related calendar events. 
+
+        system_prompt = """You are an expert at finding related calendar events.
 
 Return ONLY a JSON array of related event IDs (no other text):
 [
@@ -448,7 +523,7 @@ Return ONLY a JSON array of related event IDs (no other text):
 ]
 
 If no events are related, return an empty array: []"""
-        
+
         user_prompt = f"""Meeting Analysis:
 {analysis[:500]}
 
@@ -456,23 +531,44 @@ Calendar Events:
 {json.dumps(events_summary, indent=2)[:1000]}
 
 Which calendar events are related? Return ONLY JSON."""
-        
+
+        # Track API call timing
+        start_time = time.time()
         response = self._call_nemotron(system_prompt, user_prompt, json_mode=True)
+        api_duration_ms = int((time.time() - start_time) * 1000)
+
+        logs.append({
+            "type": "api_call",
+            "timestamp": datetime.now(TIMEZONE).strftime("%H:%M:%S"),
+            "message": "Nemotron API call completed",
+            "metadata": {
+                "model": "nvidia/llama-3.3-nemotron-super-49b-v1.5",
+                "latency_ms": api_duration_ms
+            }
+        })
+
         _LOGGER.info(f"Raw related meetings response:\n{response}\n")
-        
+
         try:
             json_str = self._extract_json(response)
             _LOGGER.info(f"Related meetings JSON: {json_str[:200]}...")
             related = json.loads(json_str)
-            
+
             # Ensure it's a list
             if not isinstance(related, list):
                 related = []
-            
+
+            # Add output logs
+            logs.append({
+                "type": "output",
+                "timestamp": datetime.now(TIMEZONE).strftime("%H:%M:%S"),
+                "message": f"Found {len(related)} related meetings"
+            })
+
             # Update state directly
             state.related_past_meetings = related
             _LOGGER.info(f"Found {len(related)} related meetings")
-            emit_workflow_event("stage_complete", "Related Meetings Finder", {"status": "success"})
+            emit_workflow_event("stage_complete", "Related Meetings Finder", {"status": "success"}, logs)
             return state
         except (json.JSONDecodeError, Exception) as e:
             _LOGGER.error(f"Failed to parse related meetings: {e}")
@@ -483,8 +579,24 @@ Which calendar events are related? Return ONLY JSON."""
     
     async def plan_actions(self, state: OrchestratorState, config: RunnableConfig):
         """Decide what actions to take based on the analysis"""
+        import time
         _LOGGER.info("Planning actions...")
-        emit_workflow_event("stage_start", "Action Planner", {"description": "Planning actions based on meeting context..."})
+
+        # Initialize logs
+        logs = [
+            {
+                "type": "processing",
+                "timestamp": datetime.now(TIMEZONE).strftime("%H:%M:%S"),
+                "message": "Starting action planning based on meeting analysis..."
+            },
+            {
+                "type": "input",
+                "timestamp": datetime.now(TIMEZONE).strftime("%H:%M:%S"),
+                "message": "Analyzing transcript and calendar context for action planning"
+            }
+        ]
+
+        emit_workflow_event("stage_start", "Action Planner", {"description": "Planning actions based on meeting context..."}, logs)
 
         # Calculate dates for the prompt
         today = datetime.now(TIMEZONE).date()
@@ -691,7 +803,22 @@ If no actions needed, return empty array: []""".format(
 
 What actions should be taken? Return ONLY JSON."""
 
+        # Track API call timing
+        start_time = time.time()
         response = self._call_nemotron(system_prompt, user_prompt, json_mode=True)
+        api_duration_ms = int((time.time() - start_time) * 1000)
+
+        # Add API call log
+        logs.append({
+            "type": "api_call",
+            "timestamp": datetime.now(TIMEZONE).strftime("%H:%M:%S"),
+            "message": f"Nemotron action planning API call completed",
+            "metadata": {
+                "model": "nvidia/llama-3.3-nemotron-super-49b-v1.5",
+                "latency_ms": api_duration_ms
+            }
+        })
+
         _LOGGER.info(f"Raw actions response from Nemotron:\n{response}\n")
         
         try:
@@ -727,24 +854,44 @@ What actions should be taken? Return ONLY JSON."""
 
             # Log detailed action information
             _LOGGER.info(f"✓ Planned {len(actions)} actions:")
+            action_summary = []
             for i, action in enumerate(actions, 1):
                 _LOGGER.info(f"  Action {i}: {action.action_type}")
+                action_detail = f"Action {i}: {action.action_type}"
                 if action.action_type == "create_event":
                     _LOGGER.info(f"    Title: {action.event_title}")
                     _LOGGER.info(f"    Date: {action.event_date}")
                     _LOGGER.info(f"    Duration: {action.duration_minutes}m")
                     _LOGGER.info(f"    Attendees: {action.attendees}")
+                    action_detail += f" - {action.event_title} on {action.event_date}"
                 elif action.action_type == "add_notes":
                     _LOGGER.info(f"    Event ID: {action.calendar_event_id}")
                     _LOGGER.info(f"    Notes: {action.notes[:100]}...")
+                    action_detail += f" - {action.calendar_event_id}"
+                action_summary.append(action_detail)
 
-            emit_workflow_event("stage_complete", "Action Planner", {"status": "success"})
+            # Add output log
+            logs.append({
+                "type": "output",
+                "timestamp": datetime.now(TIMEZONE).strftime("%H:%M:%S"),
+                "message": f"Successfully planned {len(actions)} actions for execution"
+            })
+
+            emit_workflow_event("stage_complete", "Action Planner", {"status": "success"}, logs)
             return state
         except (json.JSONDecodeError, Exception) as e:
             _LOGGER.error(f"Failed to parse actions: {e}")
             _LOGGER.error(f"Raw response: {response[:500]}")
+
+            # Add error log
+            logs.append({
+                "type": "error",
+                "timestamp": datetime.now(TIMEZONE).strftime("%H:%M:%S"),
+                "message": f"Failed to parse planned actions: {str(e)}"
+            })
+
             state.planned_actions = []
-            emit_workflow_event("stage_complete", "Action Planner", {"status": "success"})
+            emit_workflow_event("stage_complete", "Action Planner", {"status": "success"}, logs)
             return state
     
     def _create_execution_result(self, status: str, action_type: str, message: str,
@@ -761,12 +908,33 @@ What actions should be taken? Return ONLY JSON."""
 
     async def execute_actions(self, state: OrchestratorState, config: RunnableConfig):
         """Execute the planned actions in two phases: FIND_SLOT first, then others"""
+        import time
         _LOGGER.info("Executing planned actions...")
-        emit_workflow_event("stage_start", "Action Executor", {"description": "Executing planned actions..."})
+
+        # Initialize logs
+        logs = [
+            {
+                "type": "processing",
+                "timestamp": datetime.now(TIMEZONE).strftime("%H:%M:%S"),
+                "message": "Starting action execution in two phases..."
+            },
+            {
+                "type": "input",
+                "timestamp": datetime.now(TIMEZONE).strftime("%H:%M:%S"),
+                "message": f"Total actions to execute: {len(state.planned_actions)}"
+            }
+        ]
+
+        emit_workflow_event("stage_start", "Action Executor", {"description": "Executing planned actions..."}, logs)
 
         # Skip execution if auto_execute is False (manual approval required)
         if not state.auto_execute:
             _LOGGER.info("Auto-execute disabled - skipping action execution (awaiting manual approval)")
+            logs.append({
+                "type": "output",
+                "timestamp": datetime.now(TIMEZONE).strftime("%H:%M:%S"),
+                "message": "Skipped execution - awaiting user approval"
+            })
             state.execution_results = [
                 self._create_execution_result(
                     status="warning",
@@ -775,7 +943,7 @@ What actions should be taken? Return ONLY JSON."""
                     technical_details="Manual approval required before execution"
                 )
             ]
-            emit_workflow_event("stage_complete", "Action Executor", {"status": "success"})
+            emit_workflow_event("stage_complete", "Action Executor", {"status": "success"}, logs)
             return state
 
         results = []
@@ -945,13 +1113,39 @@ What actions should be taken? Return ONLY JSON."""
                 ))
 
         state.execution_results = results
-        emit_workflow_event("stage_complete", "Action Executor", {"status": "success"})
+
+        # Add output log with execution summary
+        successful_count = sum(1 for r in results if r.get("status") == "success")
+        error_count = sum(1 for r in results if r.get("status") == "error")
+        logs.append({
+            "type": "output",
+            "timestamp": datetime.now(TIMEZONE).strftime("%H:%M:%S"),
+            "message": f"Execution complete: {successful_count} successful, {error_count} failed"
+        })
+
+        emit_workflow_event("stage_complete", "Action Executor", {"status": "success"}, logs)
         return state
     
     async def generate_summary(self, state: OrchestratorState, config: RunnableConfig):
         """Generate a final summary of what was done"""
+        import time
         _LOGGER.info("Generating final summary...")
-        emit_workflow_event("stage_start", "Summary Generator", {"description": "Generating meeting summary and sending notifications..."})
+
+        # Initialize logs
+        logs = [
+            {
+                "type": "processing",
+                "timestamp": datetime.now(TIMEZONE).strftime("%H:%M:%S"),
+                "message": "Starting final summary generation..."
+            },
+            {
+                "type": "input",
+                "timestamp": datetime.now(TIMEZONE).strftime("%H:%M:%S"),
+                "message": f"Summarizing {len(state.planned_actions)} planned actions and meeting context"
+            }
+        ]
+
+        emit_workflow_event("stage_start", "Summary Generator", {"description": "Generating meeting summary and sending notifications..."}, logs)
 
         system_prompt = """You are a meeting assistant. Create a clear, structured summary organized by sections.
 
@@ -983,7 +1177,21 @@ Requirements:
 
 {json.dumps(context, indent=2)}"""
 
+        # Track API call timing
+        start_time = time.time()
         summary = self._call_nemotron(system_prompt, user_prompt)
+        api_duration_ms = int((time.time() - start_time) * 1000)
+
+        # Add API call log
+        logs.append({
+            "type": "api_call",
+            "timestamp": datetime.now(TIMEZONE).strftime("%H:%M:%S"),
+            "message": f"Nemotron summary generation API call completed",
+            "metadata": {
+                "model": "nvidia/llama-3.3-nemotron-super-49b-v1.5",
+                "latency_ms": api_duration_ms
+            }
+        })
 
         # Strip thinking content and clean up
         summary = strip_thinking_content(summary)
@@ -1014,7 +1222,14 @@ Requirements:
             "content": f"Summary:\n{summary}"
         })
 
-        emit_workflow_event("stage_complete", "Summary Generator", {"status": "success"})
+        # Add output log
+        logs.append({
+            "type": "output",
+            "timestamp": datetime.now(TIMEZONE).strftime("%H:%M:%S"),
+            "message": f"Summary generated and email sent to {len(state.planned_actions)} recipients"
+        })
+
+        emit_workflow_event("stage_complete", "Summary Generator", {"status": "success"}, logs)
         return state
 
     async def _generate_next_steps(self, state: OrchestratorState, summary: str) -> List[str]:
@@ -1232,8 +1447,24 @@ Extract key entities and provide context for research:"""
 
     async def decision_agent(self, state: OrchestratorState, config: RunnableConfig):
         """Decision agent: Analyzes options and provides intelligent recommendations"""
+        import time
         _LOGGER.info("Decision Agent: Analyzing planned actions and providing recommendations...")
-        emit_workflow_event("stage_start", "Decision Analyzer", {"description": "Analyzing options and providing recommendations..."})
+
+        # Initialize logs
+        logs = [
+            {
+                "type": "processing",
+                "timestamp": datetime.now(TIMEZONE).strftime("%H:%M:%S"),
+                "message": "Starting decision analysis of planned actions..."
+            },
+            {
+                "type": "input",
+                "timestamp": datetime.now(TIMEZONE).strftime("%H:%M:%S"),
+                "message": f"Analyzing {len(state.planned_actions)} planned actions for feasibility and priority"
+            }
+        ]
+
+        emit_workflow_event("stage_start", "Decision Analyzer", {"description": "Analyzing options and providing recommendations..."}, logs)
 
         system_prompt = """You are a decision-making agent that analyzes proposed actions and provides
 intelligent recommendations. You evaluate options based on:
@@ -1271,7 +1502,22 @@ Format as JSON:
 Analyze these actions and provide recommendations:"""
 
         try:
+            # Track API call timing
+            start_time = time.time()
             response = self._call_nemotron(system_prompt, user_prompt, json_mode=True)
+            api_duration_ms = int((time.time() - start_time) * 1000)
+
+            # Add API call log
+            logs.append({
+                "type": "api_call",
+                "timestamp": datetime.now(TIMEZONE).strftime("%H:%M:%S"),
+                "message": f"Nemotron decision analysis API call completed",
+                "metadata": {
+                    "model": "nvidia/llama-3.3-nemotron-super-49b-v1.5",
+                    "latency_ms": api_duration_ms
+                }
+            })
+
             json_str = self._extract_json(response)
             decisions_data = json.loads(json_str)
 
@@ -1283,23 +1529,55 @@ Analyze these actions and provide recommendations:"""
             })
 
             _LOGGER.info(f"Decision Agent: Analyzed {len(decisions_data.get('decisions', []))} actions")
-            emit_workflow_event("stage_complete", "Decision Analyzer", {"status": "success"})
+
+            # Add output log
+            logs.append({
+                "type": "output",
+                "timestamp": datetime.now(TIMEZONE).strftime("%H:%M:%S"),
+                "message": f"Decision analysis complete: {len(decisions_data.get('decisions', []))} actions evaluated"
+            })
+
+            emit_workflow_event("stage_complete", "Decision Analyzer", {"status": "success"}, logs)
             return state
 
         except Exception as e:
             _LOGGER.warning(f"Decision Agent error: {e}")
+
+            # Add error log
+            logs.append({
+                "type": "error",
+                "timestamp": datetime.now(TIMEZONE).strftime("%H:%M:%S"),
+                "message": f"Decision analysis error: {str(e)}"
+            })
+
             state.messages.append({
                 "role": "assistant",
                 "agent": "decision_agent",
                 "content": f"Decision agent completed with note: {str(e)}"
             })
-            emit_workflow_event("stage_complete", "Decision Analyzer", {"status": "success"})
+            emit_workflow_event("stage_complete", "Decision Analyzer", {"status": "success"}, logs)
             return state
 
     async def risk_assessment_agent(self, state: OrchestratorState, config: RunnableConfig):
         """Risk assessment agent: Identifies and evaluates risks in planned actions"""
+        import time
         _LOGGER.info("Risk Assessment Agent: Identifying potential risks...")
-        emit_workflow_event("stage_start", "Risk Assessor", {"description": "Evaluating risks and potential issues..."})
+
+        # Initialize logs
+        logs = [
+            {
+                "type": "processing",
+                "timestamp": datetime.now(TIMEZONE).strftime("%H:%M:%S"),
+                "message": "Starting risk assessment of planned actions..."
+            },
+            {
+                "type": "input",
+                "timestamp": datetime.now(TIMEZONE).strftime("%H:%M:%S"),
+                "message": f"Assessing risks for {len(state.planned_actions)} planned actions and calendar conflicts"
+            }
+        ]
+
+        emit_workflow_event("stage_start", "Risk Assessor", {"description": "Evaluating risks and potential issues..."}, logs)
 
         system_prompt = """You are a risk assessment agent specialized in identifying potential issues
 in meeting action items and scheduled events. Evaluate risks in:
@@ -1347,7 +1625,22 @@ Planned actions summary:
 Identify risks and provide assessment:"""
 
         try:
+            # Track API call timing
+            start_time = time.time()
             response = self._call_nemotron(system_prompt, user_prompt, json_mode=True)
+            api_duration_ms = int((time.time() - start_time) * 1000)
+
+            # Add API call log
+            logs.append({
+                "type": "api_call",
+                "timestamp": datetime.now(TIMEZONE).strftime("%H:%M:%S"),
+                "message": f"Nemotron risk assessment API call completed",
+                "metadata": {
+                    "model": "nvidia/llama-3.3-nemotron-super-49b-v1.5",
+                    "latency_ms": api_duration_ms
+                }
+            })
+
             json_str = self._extract_json(response)
             risk_data = json.loads(json_str)
 
@@ -1359,17 +1652,33 @@ Identify risks and provide assessment:"""
             })
 
             _LOGGER.info(f"Risk Assessment Agent: Identified {len(risk_data.get('risks', []))} risks")
-            emit_workflow_event("stage_complete", "Risk Assessor", {"status": "success"})
+
+            # Add output log
+            logs.append({
+                "type": "output",
+                "timestamp": datetime.now(TIMEZONE).strftime("%H:%M:%S"),
+                "message": f"Risk assessment complete: {len(risk_data.get('risks', []))} risks identified, {risk_data.get('overall_risk_level', 'unknown')} overall level"
+            })
+
+            emit_workflow_event("stage_complete", "Risk Assessor", {"status": "success"}, logs)
             return state
 
         except Exception as e:
             _LOGGER.warning(f"Risk Assessment Agent error: {e}")
+
+            # Add error log
+            logs.append({
+                "type": "error",
+                "timestamp": datetime.now(TIMEZONE).strftime("%H:%M:%S"),
+                "message": f"Risk assessment error: {str(e)}"
+            })
+
             state.messages.append({
                 "role": "assistant",
                 "agent": "risk_assessment_agent",
                 "content": f"Risk assessment completed with note: {str(e)}"
             })
-            emit_workflow_event("stage_complete", "Risk Assessor", {"status": "success"})
+            emit_workflow_event("stage_complete", "Risk Assessor", {"status": "success"}, logs)
             return state
 
 
@@ -1413,19 +1722,29 @@ def set_workflow_event_callback(callback):
     """Set a callback function for workflow events"""
     global _event_callback
     _event_callback = callback
+    if callback:
+        _LOGGER.info(f"✓ [set_workflow_event_callback] Callback set successfully: {callback}")
+    else:
+        _LOGGER.warning(f"⚠️ [set_workflow_event_callback] Callback set to None")
 
-def emit_workflow_event(event_type: str, agent_name: str, data: dict = None):
-    """Emit a workflow event to all listeners"""
+def emit_workflow_event(event_type: str, agent_name: str, data: dict = None, logs: list = None):
+    """Emit a workflow event to all listeners with optional log entries"""
     global _event_callback
+    event = {
+        "type": event_type,
+        "agent": agent_name,
+        "timestamp": datetime.now(TIMEZONE).isoformat(),
+    }
+    if data:
+        event.update(data)
+    if logs:
+        event["logs"] = logs
+
     if _event_callback:
-        event = {
-            "type": event_type,
-            "agent": agent_name,
-            "timestamp": datetime.now(TIMEZONE).isoformat(),
-        }
-        if data:
-            event.update(data)
+        _LOGGER.info(f"🔌 [emit_workflow_event] Emitting {event_type} for {agent_name}" + (f" with {len(logs)} logs" if logs else ""))
         _event_callback(event)
+    else:
+        _LOGGER.warning(f"⚠️ [emit_workflow_event] No callback set! Event not emitted: {event_type} for {agent_name}")
 
 
 # Helper function for Flask integration

@@ -9,6 +9,8 @@ interface TimelineBarProps {
 }
 
 export const TimelineBar: React.FC<TimelineBarProps> = ({ activeAgent, completedAgents, progress }) => {
+  console.log('📊 [TimelineBar] Props received:', { activeAgent, completedAgents, progress });
+
   const getAgentStatus = (agentName: string): 'pending' | 'active' | 'completed' => {
     if (activeAgent === agentName) return 'active';
     if (completedAgents.includes(agentName)) return 'completed';

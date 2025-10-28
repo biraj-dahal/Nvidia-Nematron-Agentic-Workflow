@@ -51,7 +51,7 @@ import {
  */
 const AppContent: React.FC = () => {
   // Workflow context
-  const { workflow: workflowState, startWorkflow, stopWorkflow, handleWorkflowEvent, resetWorkflow } = useWorkflow();
+  const { workflow: workflowState, startWorkflow, handleWorkflowEvent, resetWorkflow } = useWorkflow();
 
   // Local state
   const [showTranscription, setShowTranscription] = useState(false);
@@ -68,7 +68,6 @@ const AppContent: React.FC = () => {
     audioBlob,
     startRecording,
     stopRecording,
-    resetRecording,
   } = useMediaRecorder();
 
   // State for transcript
@@ -83,12 +82,15 @@ const AppContent: React.FC = () => {
   } = useOrchestrator();
 
   // Callback for workflow stream events
+  // NOTE: Don't include workflowState in dependency array - it would cause the callback
+  // to be recreated every time state changes, which resets the EventSource connection
   const onWorkflowEvent = useCallback((event: any) => {
-    console.log('📡 [SSE Event]', event.type, event.agent || 'N/A');
+    console.log('📡 [App] Received SSE event:', event.type, event.agent || 'N/A');
     handleWorkflowEvent(event);
+    console.log('📡 [App] handleWorkflowEvent called');
   }, [handleWorkflowEvent]);
 
-  const { startStream, closeStream: stopStream, isConnected } = useWorkflowStream(onWorkflowEvent);
+  const { startStream, closeStream: stopStream } = useWorkflowStream(onWorkflowEvent);
 
   // Error handling effect
   useEffect(() => {
@@ -101,6 +103,19 @@ const AppContent: React.FC = () => {
     }
   }, [recordingState.error, orchestratorError]);
 
+  // Monitor workflow state changes (logging only on cards/agents change)
+  useEffect(() => {
+    if (workflowState.agentCards.length > 0 || workflowState.completedAgents.length > 0) {
+      console.log('📊 [App] Workflow state changed:', {
+        currentAgent: workflowState.currentAgent,
+        agentCardsCount: workflowState.agentCards.length,
+        completedAgentsCount: workflowState.completedAgents.length,
+        agentCards: workflowState.agentCards.map(c => ({ name: c.agentName, status: c.status })),
+        progress: Math.round(workflowState.progress),
+      });
+    }
+  }, [workflowState.agentCards, workflowState.completedAgents, workflowState.currentAgent, workflowState.progress]);
+
   /**
    * Handle start recording
    * Initializes the workflow stream and starts audio recording
@@ -112,16 +127,19 @@ const AppContent: React.FC = () => {
 
       // Reset workflow state
       resetWorkflow();
+
+      // Start workflow stream for real-time updates FIRST
+      // This ensures the SSE connection is ready to receive events
+      startStream();
+
+      // Initialize workflow and show cards
       startWorkflow();
       setShowTranscription(false);
-      setShowWorkflowViz(false);
+      setShowWorkflowViz(true);  // Show cards immediately
       setShowResults(false);
 
       // Start recording
       await startRecording();
-
-      // Start workflow stream for real-time updates
-      startStream();
 
       setStatusMessage('Recording in progress. Speak clearly into your microphone.');
     } catch (err) {
@@ -161,15 +179,38 @@ const AppContent: React.FC = () => {
       // Show workflow visualization
       setShowWorkflowViz(true);
 
-      // Run orchestrator with transcription
-      await handleOrchestration(transcriptionText);
+      // Run orchestrator with transcription - note: handleOrchestration is defined below
+      // so we call it directly instead of including in dependencies
+      await (async (transcriptionText: string) => {
+        try {
+          setStatusMessage('Running AI workflow...');
+          setShowWorkflowViz(true);
+
+          const result = await runOrchestrator(transcriptionText, autoExecute);
+
+          if (result) {
+            setStatusMessage('Workflow completed successfully!');
+            setShowResults(true);
+
+            // Stop stream after completion
+            setTimeout(() => {
+              stopStream();
+            }, 1000);
+          }
+
+        } catch (err) {
+          setError(`Orchestration failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
+          setStatusMessage('');
+          stopStream();
+        }
+      })(transcriptionText);
 
     } catch (err) {
       setError(`Transcription failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
       setStatusMessage('');
       stopStream();
     }
-  }, [transcribeAudio, stopStream]);
+  }, [transcribeAudio, stopStream, runOrchestrator, autoExecute]);
 
   /**
    * Process audio blob after recording stops
@@ -181,49 +222,6 @@ const AppContent: React.FC = () => {
     }
   }, [audioBlob, recordingState.isRecording, handleTranscription]);
 
-  /**
-   * Handle orchestration workflow
-   * Runs the AI workflow to process the meeting transcript
-   */
-  const handleOrchestration = async (transcriptionText: string) => {
-    try {
-      setStatusMessage('Running AI workflow...');
-
-      // CRITICAL: Wait for SSE connection to be established before starting workflow
-      // This prevents losing early events due to connection timing issues
-      console.log('⏳ Waiting for SSE connection...');
-      let attempts = 0;
-      const maxAttempts = 20; // 2 seconds max wait
-      while (!isConnected && attempts < maxAttempts) {
-        await new Promise(resolve => setTimeout(resolve, 100));
-        attempts++;
-      }
-
-      if (isConnected) {
-        console.log('✓ SSE Connected! Starting workflow...');
-      } else {
-        console.warn('⚠ SSE connection timeout, proceeding anyway...');
-      }
-
-      // Run orchestrator (workflow updates will come via SSE)
-      const result = await runOrchestrator(transcriptionText, autoExecute);
-
-      if (result) {
-        setStatusMessage('Workflow completed successfully!');
-        setShowResults(true);
-
-        // Stop stream after completion
-        setTimeout(() => {
-          stopStream();
-        }, 1000);
-      }
-
-    } catch (err) {
-      setError(`Orchestration failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
-      setStatusMessage('');
-      stopStream();
-    }
-  };
 
   /**
    * Handle approval of planned actions (manual execution mode)

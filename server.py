@@ -48,19 +48,24 @@ if not NVIDIA_API_KEY:
 
 def broadcast_workflow_event(event_data: dict):
     """Broadcast a workflow event to all connected SSE clients"""
+    print(f"🔌 [broadcast_workflow_event] Broadcasting {event_data.get('type')} for {event_data.get('agent')} to {len(workflow_event_queues)} clients")
     with workflow_event_lock:
         # Remove dead queues and broadcast to active ones
         dead_queues = []
         for i, q in enumerate(workflow_event_queues):
             try:
                 q.put_nowait(event_data)
+                print(f"   ✓ Broadcasted to client {i}")
             except queue.Full:
                 # Queue is full, mark for removal
+                print(f"   ❌ Queue full for client {i}, removing...")
                 dead_queues.append(i)
 
         # Remove dead queues in reverse order to maintain indices
         for i in reversed(dead_queues):
             workflow_event_queues.pop(i)
+
+        print(f"   ✓ Broadcast complete: {len(workflow_event_queues)} active clients")
 
 
 def convert_to_nvidia_format(input_path, output_path):
@@ -229,9 +234,11 @@ def stream_workflow():
 
         # Track if client is still connected
         client_id = id(client_queue)
+        print(f"✓ [/stream-workflow] Client connected (ID: {client_id}), total clients: {len(workflow_event_queues)}")
 
         try:
             # Send initial connection message
+            print(f"✓ [/stream-workflow] Sending connection confirmation to client {client_id}")
             yield f"data: {json.dumps({'type': 'connected', 'message': 'Connected to workflow stream'})}\n\n"
 
             # Stream events from the queue
@@ -239,15 +246,18 @@ def stream_workflow():
                 try:
                     # Get event from queue with timeout
                     event = client_queue.get(timeout=30)  # 30 second timeout for keep-alive
+                    print(f"📨 [/stream-workflow] Sending event to client {client_id}: {event.get('type')} {event.get('agent')}")
                     yield f"data: {json.dumps(event)}\n\n"
                 except queue.Empty:
                     # Send keep-alive heartbeat
+                    print(f"💓 [/stream-workflow] Sending heartbeat to client {client_id}")
                     yield f"data: {json.dumps({'type': 'heartbeat'})}\n\n"
         finally:
             # Clean up when client disconnects
             with workflow_event_lock:
                 if client_queue in workflow_event_queues:
                     workflow_event_queues.remove(client_queue)
+            print(f"❌ [/stream-workflow] Client disconnected (ID: {client_id}), remaining clients: {len(workflow_event_queues)}")
 
     return Response(event_generator(), mimetype='text/event-stream', headers={
         'Cache-Control': 'no-cache',

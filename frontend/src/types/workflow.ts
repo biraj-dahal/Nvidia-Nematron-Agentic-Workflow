@@ -51,6 +51,21 @@ export interface OrchestratorResponse {
   related_meetings_count: number;
 }
 
+// Log entry for execution details
+export interface LogEntry {
+  type: 'input' | 'processing' | 'api_call' | 'output' | 'timing' | 'error';
+  timestamp: string; // ISO format or HH:MM:SS
+  message: string;
+  metadata?: {
+    model?: string;
+    tokens?: number;
+    latency_ms?: number;
+    duration_ms?: number;
+    detail?: string;
+    [key: string]: any;
+  };
+}
+
 // Workflow SSE event types
 export type WorkflowEventType = 'stage_start' | 'stage_complete' | 'connected' | 'heartbeat';
 
@@ -61,6 +76,7 @@ export interface WorkflowEvent {
   description?: string;
   status?: string;
   message?: string;
+  logs?: LogEntry[];
 }
 
 // Agent card state
@@ -68,6 +84,7 @@ export interface AgentCardState {
   agentName: string;
   status: 'pending' | 'active' | 'completed' | 'error';
   description: string;
+  logs: LogEntry[];
   startTime?: Date;
   endTime?: Date;
   expanded: boolean;

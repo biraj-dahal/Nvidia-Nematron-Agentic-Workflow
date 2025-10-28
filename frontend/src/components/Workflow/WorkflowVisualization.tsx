@@ -1,8 +1,9 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { Box, Paper } from '@mui/material';
 import { TimelineBar } from './TimelineBar';
 import { AgentCard } from './AgentCard';
 import { AgentCardState } from '../../types/workflow';
+import { AGENT_NAMES } from '../../types/workflow';
 
 interface WorkflowVisualizationProps {
   isVisible: boolean;
@@ -19,6 +20,24 @@ export const WorkflowVisualization: React.FC<WorkflowVisualizationProps> = ({
   agentCards,
   progress,
 }) => {
+  // Sort cards to match the order in AGENT_NAMES (timeline order)
+  const sortedCards = useMemo(() => {
+    const cardMap = new Map(agentCards.map(card => [card.agentName, card]));
+    return AGENT_NAMES
+      .map(agentName => cardMap.get(agentName))
+      .filter((card) => card !== undefined) as AgentCardState[];
+  }, [agentCards]);
+
+  console.log('🎨 [WorkflowVisualization] Props received:', {
+    isVisible,
+    activeAgent,
+    completedAgents,
+    agentCardsCount: agentCards.length,
+    sortedCardsCount: sortedCards.length,
+    agentCards: sortedCards.map(c => ({ name: c.agentName, status: c.status })),
+    progress,
+  });
+
   if (!isVisible) {
     return null;
   }
@@ -62,12 +81,13 @@ export const WorkflowVisualization: React.FC<WorkflowVisualizationProps> = ({
           },
         }}
       >
-        {agentCards.map((card) => (
+        {sortedCards.map((card) => (
           <AgentCard
             key={card.agentName}
             agentName={card.agentName}
             status={card.status}
             description={card.description}
+            logs={card.logs}
             expanded={card.expanded}
           />
         ))}
