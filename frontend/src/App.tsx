@@ -35,7 +35,7 @@ import { nvidiaTheme } from './theme/nvidiaTheme';
 import { useMediaRecorder, useOrchestrator, useWorkflowStream } from './hooks';
 
 // Components
-import { WorkflowVisualization } from './components/Workflow';
+import { WorkflowStatusLog } from './components/Workflow';
 import {
   ActionCards,
   ExecutionResults,
@@ -84,6 +84,7 @@ const AppContent: React.FC = () => {
 
   // Callback for workflow stream events
   const onWorkflowEvent = useCallback((event: any) => {
+    console.log('📡 [Workflow Event]', event.type, event.agent || 'N/A');
     handleWorkflowEvent(event);
   }, [handleWorkflowEvent]);
 
@@ -187,6 +188,10 @@ const AppContent: React.FC = () => {
   const handleOrchestration = async (transcriptionText: string) => {
     try {
       setStatusMessage('Running AI workflow...');
+
+      // Give SSE connection time to fully establish before workflow starts emitting events
+      // This prevents losing early events due to connection timing issues
+      await new Promise(resolve => setTimeout(resolve, 800));
 
       // Run orchestrator (workflow updates will come via SSE)
       const result = await runOrchestrator(transcriptionText, autoExecute);
@@ -427,18 +432,8 @@ const AppContent: React.FC = () => {
           </Paper>
         )}
 
-        {/* Workflow Visualization */}
-        {showWorkflowViz && (
-          <Box sx={{ mb: 4 }}>
-            <WorkflowVisualization
-              isVisible={showWorkflowViz}
-              activeAgent={workflowState.currentAgent}
-              completedAgents={workflowState.completedAgents}
-              agentCards={workflowState.agentCards}
-              progress={workflowState.progress}
-            />
-          </Box>
-        )}
+        {/* Workflow Status Log */}
+        {showWorkflowViz && <WorkflowStatusLog />}
 
         {/* Results Section */}
         {showResults && orchestratorResult && (
