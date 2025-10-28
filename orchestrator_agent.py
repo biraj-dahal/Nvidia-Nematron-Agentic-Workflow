@@ -643,6 +643,18 @@ What actions should be taken? Return ONLY JSON."""
             state.planned_actions = []
             return state
     
+    def _create_execution_result(self, status: str, action_type: str, message: str,
+                                event_id: str = None, technical_details: str = None) -> Dict[str, Any]:
+        """Create a structured execution result dictionary with timestamp"""
+        return {
+            "timestamp": datetime.now(TIMEZONE).isoformat(),
+            "status": status,  # "success", "error", "warning"
+            "action_type": action_type,
+            "message": message,
+            "event_id": event_id,
+            "technical_details": technical_details
+        }
+
     async def execute_actions(self, state: OrchestratorState, config: RunnableConfig):
         """Execute the planned actions in two phases: FIND_SLOT first, then others"""
         _LOGGER.info("Executing planned actions...")
@@ -650,7 +662,14 @@ What actions should be taken? Return ONLY JSON."""
         # Skip execution if auto_execute is False (manual approval required)
         if not state.auto_execute:
             _LOGGER.info("Auto-execute disabled - skipping action execution (awaiting manual approval)")
-            state.execution_results = ["Actions planned but not executed - awaiting user approval"]
+            state.execution_results = [
+                self._create_execution_result(
+                    status="warning",
+                    action_type="pending_approval",
+                    message="Actions planned but not executed - awaiting user approval",
+                    technical_details="Manual approval required before execution"
+                )
+            ]
             return state
 
         results = []
@@ -674,30 +693,54 @@ What actions should be taken? Return ONLY JSON."""
 
                     if slots:
                         available_slots = slots  # Store for CREATE_EVENT to use
-                        result = f"Found {len(slots)} available slots:\n"
-                        for slot in slots:
-                            result += f"  - {slot.start} ({slot.duration_minutes} min)\n"
-                        results.append(result)
+                        slot_details = ", ".join([f"{slot.start} ({slot.duration_minutes} min)" for slot in slots])
+                        results.append(self._create_execution_result(
+                            status="success",
+                            action_type="find_available_slot",
+                            message=f"Found {len(slots)} available slots",
+                            technical_details=slot_details
+                        ))
                     else:
-                        results.append("No available slots found in the next 14 days")
+                        results.append(self._create_execution_result(
+                            status="warning",
+                            action_type="find_available_slot",
+                            message="No available slots found in the next 14 days",
+                            technical_details="Check calendar availability or extend search period"
+                        ))
 
                 elif action.action_type == ActionType.ADD_NOTES:
                     result = self.calendar_tool.add_notes_to_event(
                         action.calendar_event_id, action.notes
                     )
-                    results.append(result)
+                    results.append(self._create_execution_result(
+                        status="success",
+                        action_type="add_notes",
+                        message=f"Added notes to event {action.calendar_event_id}",
+                        event_id=action.calendar_event_id,
+                        technical_details=result
+                    ))
 
                 elif action.action_type == ActionType.UPDATE_EVENT:
                     event_id = action.calendar_event_id
                     updates = {"description": action.notes or "Updated notes"}
                     self.calendar_tool.update_event(event_id, updates)
-                    result = f"Updated event {event_id} with new notes."
-                    results.append(result)
+                    results.append(self._create_execution_result(
+                        status="success",
+                        action_type="update_event",
+                        message=f"Updated event with new notes",
+                        event_id=event_id,
+                        technical_details=f"Event ID: {event_id}"
+                    ))
 
             except Exception as e:
                 error_msg = f"Error executing {action.action_type}: {str(e)}"
                 _LOGGER.error(error_msg)
-                results.append(error_msg)
+                results.append(self._create_execution_result(
+                    status="error",
+                    action_type=str(action.action_type),
+                    message=f"Failed to {action.action_type}",
+                    technical_details=str(e)
+                ))
 
         # Phase 2: Execute CREATE_EVENT actions (can now use available_slots)
         for action in state.planned_actions:
@@ -752,7 +795,12 @@ What actions should be taken? Return ONLY JSON."""
                             start_time, end_time = slots[0].start, slots[0].end
                             _LOGGER.info(f"Found and using slot: {start_time}")
                         else:
-                            results.append(f"Cannot create event '{action.event_title}': No available slots found")
+                            results.append(self._create_execution_result(
+                                status="error",
+                                action_type="create_event",
+                                message=f"Cannot create event: No available slots found",
+                                technical_details=f"Title: {action.event_title}"
+                            ))
                             continue
 
                 # Map attendee names to email addresses using fuzzy matching
@@ -771,14 +819,24 @@ What actions should be taken? Return ONLY JSON."""
                 )
 
                 attendee_info = f" with {len(attendee_emails)} attendees" if attendee_emails else ""
-                result = f"Created new event '{action.event_title}' on {start_time}{attendee_info} (ID: {event_id})"
-                results.append(result)
-                _LOGGER.info(result)
+                results.append(self._create_execution_result(
+                    status="success",
+                    action_type="create_event",
+                    message=f"Created event '{action.event_title}'{attendee_info}",
+                    event_id=event_id,
+                    technical_details=f"Scheduled for {start_time}"
+                ))
+                _LOGGER.info(f"Created new event '{action.event_title}' with ID: {event_id}")
 
             except Exception as e:
                 error_msg = f"Error executing {action.action_type}: {str(e)}"
                 _LOGGER.error(error_msg)
-                results.append(error_msg)
+                results.append(self._create_execution_result(
+                    status="error",
+                    action_type="create_event",
+                    message=f"Failed to create event '{action.event_title}'",
+                    technical_details=str(e)
+                ))
 
         state.execution_results = results
         return state
