@@ -117,6 +117,45 @@ client = OpenAI(
 )
 
 
+# Helper functions for summary improvement
+def strip_thinking_content(text: str) -> str:
+    """Remove thinking/reasoning content from AI output"""
+    import re
+
+    # Remove <think> tags
+    text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
+
+    # Remove common thinking phrase patterns
+    thinking_patterns = [
+        r'(?:I|The model) (?:think|believe|consider|analyze|reason)',
+        r'Based on (?:my analysis|my reasoning)',
+        r'Therefore(?:,| I)',
+        r'To summarize what I',
+    ]
+
+    for pattern in thinking_patterns:
+        text = re.sub(pattern, '', text, flags=re.IGNORECASE)
+
+    # Clean up extra whitespace
+    text = re.sub(r'\n\s*\n', '\n\n', text).strip()
+
+    return text
+
+
+def generate_calendar_link(event_id: str) -> str:
+    """Generate Google Calendar edit link for an event"""
+    if not event_id:
+        return ""
+    return f"https://calendar.google.com/calendar/u/0/r/eventedit/{event_id}"
+
+
+def format_timestamp(dt: Optional[datetime] = None) -> str:
+    """Format datetime in readable format"""
+    if dt is None:
+        dt = datetime.now(TIMEZONE)
+    return dt.strftime("%B %d, %Y at %I:%M %p %Z")
+
+
 class ActionType(str, Enum):
     """Types of actions the orchestrator can take"""
     ADD_NOTES = "add_notes"
@@ -137,13 +176,25 @@ class MeetingAction(BaseModel):
     reasoning: str = ""
 
 
+class ExecutionResult(BaseModel):
+    """Structured execution result with metadata"""
+    timestamp: str  # ISO format datetime
+    status: str  # "success", "error", "warning"
+    action_type: str  # Type of action performed
+    message: str  # User-friendly description
+    event_id: Optional[str] = None  # Calendar event ID if applicable
+    technical_details: Optional[str] = None  # Event ID or error details
+
+
 class OrchestratorState(BaseModel):
     """State for the orchestrator agent"""
     audio_transcript: str
     calendar_events: List[CalendarEvent] = []
     related_past_meetings: List[Dict[str, Any]] = []
     planned_actions: List[MeetingAction] = []
-    execution_results: List[str] = []
+    execution_results: List[Dict[str, Any]] = []  # Can be old string format or new structured format
+    execution_results_structured: List[ExecutionResult] = []  # New structured format
+    next_steps: List[str] = []  # AI-suggested next steps
     messages: Annotated[Sequence[Any], add_messages] = []
     auto_execute: bool = True  # If False, skip execution phase for manual approval
 
@@ -736,26 +787,45 @@ What actions should be taken? Return ONLY JSON."""
         """Generate a final summary of what was done"""
         _LOGGER.info("Generating final summary...")
 
-        system_prompt = """You are a meeting assistant. Create a concise summary of what actions
-were taken based on the meeting transcript. Be specific and actionable."""
+        system_prompt = """You are a meeting assistant. Create a clear, structured summary organized by sections.
+
+Format your response with these EXACT section headers (use emojis for clarity):
+📋 Meeting Overview - 2-3 sentences about the meeting
+🎯 Key Topics Discussed - Bullet list of main discussion points
+📅 Scheduled Events - Details of calendar events created
+⚡ Action Items - Specific action items and responsibilities
+
+Requirements:
+- Be specific and actionable
+- Keep each section concise but detailed
+- No introductions, explanations, or reasoning - just the facts
+- Start directly with the 📋 emoji"""
 
         context = {
             "transcript_preview": state.audio_transcript[:500],
             "actions_taken": [
                 {
                     "action": action.action_type,
+                    "title": action.event_title,
                     "reasoning": action.reasoning
                 }
                 for action in state.planned_actions
-            ],
-            "results": state.execution_results
+            ]
         }
 
-        user_prompt = f"""Generate a summary of the meeting and actions taken:
+        user_prompt = f"""Based on this meeting context, create a structured summary:
 
 {json.dumps(context, indent=2)}"""
 
         summary = self._call_nemotron(system_prompt, user_prompt)
+
+        # Strip thinking content and clean up
+        summary = strip_thinking_content(summary)
+        _LOGGER.info(f"Generated summary (cleaned): {summary[:200]}...")
+
+        # Generate next steps using AI
+        next_steps = await self._generate_next_steps(state, summary)
+        state.next_steps = next_steps
 
         # Create HTML formatted version
         html_summary = self._create_html_summary(summary, state)
@@ -780,6 +850,36 @@ were taken based on the meeting transcript. Be specific and actionable."""
 
         return state
 
+    async def _generate_next_steps(self, state: OrchestratorState, summary: str) -> List[str]:
+        """Generate AI-suggested next steps based on meeting summary"""
+        _LOGGER.info("Generating suggested next steps...")
+
+        system_prompt = """You are a meeting facilitator. Based on the meeting summary and scheduled events,
+suggest 3-4 proactive next steps the team should take. Focus on:
+- Preparation tasks for scheduled meetings
+- Follow-up items that need attention
+- Stakeholder communications needed
+- Resources or materials that should be prepared
+
+Format as a numbered list with brief descriptions. Be specific and actionable."""
+
+        user_prompt = f"""Meeting Summary:
+{summary}
+
+Scheduled Events: {len(state.planned_actions)} events
+
+Generate 3-4 specific next steps the team should take:"""
+
+        try:
+            response = self._call_nemotron(system_prompt, user_prompt)
+            # Parse response into bullet points
+            lines = response.strip().split('\n')
+            next_steps = [line.strip() for line in lines if line.strip() and not line.startswith('#')]
+            return next_steps[:4]  # Return max 4 steps
+        except Exception as e:
+            _LOGGER.warning(f"Failed to generate next steps: {e}")
+            return []
+
     def _create_html_summary(self, summary: str, state: OrchestratorState) -> str:
         """Create HTML formatted email summary"""
 
@@ -801,10 +901,55 @@ were taken based on the meeting transcript. Be specific and actionable."""
             </tr>
             """
 
-        # Build results list
+        # Build enhanced results list with status indicators and calendar links
         results_html = ""
         for result in state.execution_results:
-            results_html += f'<li style="margin-bottom: 8px;">{result}</li>'
+            # Handle both old string format and new dict format for backward compatibility
+            if isinstance(result, dict):
+                status = result.get("status", "unknown")
+                icon = "✅" if status == "success" else "❌" if status == "error" else "⚠️"
+                timestamp = result.get("timestamp", "")
+                message = result.get("message", "")
+                event_id = result.get("event_id", "")
+                tech_details = result.get("technical_details", "")
+
+                calendar_link = ""
+                if event_id:
+                    link_url = generate_calendar_link(event_id)
+                    calendar_link = f'<br/><a href="{link_url}" style="color: #667eea; text-decoration: none;">📅 Edit in Calendar</a>'
+
+                tech_html = f'<div style="font-size: 11px; color: #999; margin-top: 8px;">ID: {tech_details or event_id}</div>' if tech_details or event_id else ""
+
+                results_html += f'''<div style="background: {'#e8f5e9' if status == 'success' else '#ffebee'}; border-left: 4px solid {'#4CAF50' if status == 'success' else '#f44336'}; padding: 15px; margin-bottom: 12px; border-radius: 4px;">
+                    <div style="display: flex; align-items: start; gap: 12px;">
+                        <span style="font-size: 18px; line-height: 1.4;">{icon}</span>
+                        <div style="flex: 1;">
+                            <div style="font-weight: bold; margin-bottom: 4px;">{message}</div>
+                            {calendar_link}
+                            {tech_html}
+                            <div style="font-size: 12px; color: #666; margin-top: 8px;">⏰ {timestamp}</div>
+                        </div>
+                    </div>
+                </div>'''
+            else:
+                # Old string format - simple display
+                results_html += f'<li style="margin-bottom: 8px;">{result}</li>'
+
+        # Build next steps section
+        next_steps_html = ""
+        if state.next_steps:
+            for i, step in enumerate(state.next_steps, 1):
+                next_steps_html += f'<div style="background: #f0f7ff; border-left: 4px solid #2196F3; padding: 12px; margin-bottom: 10px; border-radius: 4px;"><strong>💡 {step}</strong></div>'
+            next_steps_section = f'''
+            <div style="margin-bottom: 25px;">
+                <h2 style="color: #667eea;">💡 Suggested Next Steps</h2>
+                <div style="margin-top: 15px;">
+                    {next_steps_html}
+                </div>
+            </div>
+            '''
+        else:
+            next_steps_section = ""
 
         html = f"""
         <!DOCTYPE html>
@@ -820,8 +965,8 @@ were taken based on the meeting transcript. Be specific and actionable."""
             </div>
 
             <div style="background: #f5f5f5; padding: 20px; border-radius: 8px; margin-bottom: 25px;">
-                <h2 style="margin-top: 0; color: #667eea;">📝 Summary</h2>
-                <p style="white-space: pre-wrap;">{summary}</p>
+                <h2 style="margin-top: 0; color: #667eea;">📝 Meeting Summary</h2>
+                <div style="white-space: pre-wrap; line-height: 1.8; color: #444;">{summary}</div>
             </div>
 
             <div style="margin-bottom: 25px;">
@@ -842,10 +987,12 @@ were taken based on the meeting transcript. Be specific and actionable."""
 
             <div style="margin-bottom: 25px;">
                 <h2 style="color: #667eea;">✅ Execution Results</h2>
-                <ul style="background: #f9f9f9; padding: 20px 40px; border-radius: 8px;">
+                <div style="margin-top: 15px;">
                     {results_html}
-                </ul>
+                </div>
             </div>
+
+            {next_steps_section}
 
             <div style="text-align: center; padding: 20px; color: #999; font-size: 12px; border-top: 1px solid #ddd;">
                 <p>Generated by NVIDIA Nemotron AI Meeting Orchestrator</p>
