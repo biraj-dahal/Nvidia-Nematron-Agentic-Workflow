@@ -208,16 +208,20 @@ class MeetingOrchestrator:
         self.email_tool = GmailAgentTool()
         
     def _call_nemotron(self, system_prompt: str, user_prompt: str, json_mode: bool = False) -> str:
-        """Helper to call Nemotron with proper formatting"""
+        """Helper to call Nemotron with proper formatting and tracking"""
+        import time
+
         # Add JSON formatting instructions to system prompt if needed
         if json_mode:
             system_prompt += "\n\nIMPORTANT: You must respond with ONLY valid JSON. No explanatory text before or after. Start with { or [ and end with } or ]."
-        
+
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt}
         ]
-        
+
+        # Track API call
+        start_time = time.time()
         completion = self.client.chat.completions.create(
             model="nvidia/llama-3.3-nemotron-super-49b-v1.5",
             messages=messages,
@@ -226,8 +230,31 @@ class MeetingOrchestrator:
             max_tokens=4096,
             stream=False
         )
-        
-        return completion.choices[0].message.content
+        end_time = time.time()
+
+        response_text = completion.choices[0].message.content
+        latency_ms = (end_time - start_time) * 1000
+
+        # Log call details for UI visualization
+        call_details = {
+            "timestamp": datetime.now(TIMEZONE).isoformat(),
+            "model": "nvidia/llama-3.3-nemotron-super-49b-v1.5",
+            "latency_ms": latency_ms,
+            "json_mode": json_mode,
+            "system_prompt_length": len(system_prompt),
+            "user_prompt_length": len(user_prompt),
+            "response_length": len(response_text),
+            "preview": response_text[:200] if len(response_text) > 200 else response_text
+        }
+
+        # Store for broadcasting to UI
+        if not hasattr(self, 'nemotron_calls'):
+            self.nemotron_calls = []
+        self.nemotron_calls.append(call_details)
+
+        _LOGGER.debug(f"Nemotron API call: {latency_ms:.0f}ms, response: {len(response_text)} chars")
+
+        return response_text
     
     def _extract_json(self, text: str) -> str:
         """Extract JSON from text that might contain markdown or other formatting"""
@@ -1062,6 +1089,198 @@ Generate 3-4 specific next steps the team should take:"""
 
         return html
 
+    async def research_agent(self, state: OrchestratorState, config: RunnableConfig):
+        """Research agent: Extracts entities and gathers background context"""
+        _LOGGER.info("Research Agent: Extracting entities and gathering context...")
+
+        system_prompt = """You are a research agent that extracts important entities from a meeting transcript
+and provides context about them. Your job is to identify:
+- Key projects, products, or initiatives mentioned
+- Important people or teams involved
+- Technologies, tools, or frameworks mentioned
+- Competitors or external organizations referenced
+
+For each entity, provide:
+1. Entity name
+2. Entity type (project/person/technology/organization)
+3. Brief context (1-2 sentences about its relevance)
+
+Format your response as JSON with structure:
+{
+  "entities": [
+    {"name": "...", "type": "...", "context": "..."},
+    ...
+  ],
+  "key_topics": ["topic1", "topic2", "..."],
+  "summary": "Brief summary of key context"
+}"""
+
+        user_prompt = f"""Meeting transcript:
+{state.audio_transcript[:1000]}...
+
+Extract key entities and provide context for research:"""
+
+        try:
+            response = self._call_nemotron(system_prompt, user_prompt, json_mode=True)
+            json_str = self._extract_json(response)
+            research_data = json.loads(json_str)
+
+            # Store research findings in state
+            state.messages.append({
+                "role": "assistant",
+                "agent": "research_agent",
+                "content": f"Research findings: {research_data.get('summary', 'Context gathered')}",
+                "research_data": research_data
+            })
+
+            _LOGGER.info(f"Research Agent: Identified {len(research_data.get('entities', []))} entities")
+            return state
+
+        except Exception as e:
+            _LOGGER.warning(f"Research Agent error: {e}")
+            state.messages.append({
+                "role": "assistant",
+                "agent": "research_agent",
+                "content": f"Research agent completed with note: {str(e)}"
+            })
+            return state
+
+    async def decision_agent(self, state: OrchestratorState, config: RunnableConfig):
+        """Decision agent: Analyzes options and provides intelligent recommendations"""
+        _LOGGER.info("Decision Agent: Analyzing planned actions and providing recommendations...")
+
+        system_prompt = """You are a decision-making agent that analyzes proposed actions and provides
+intelligent recommendations. You evaluate options based on:
+- Priority and urgency
+- Resource availability and constraints
+- Stakeholder impact
+- Timeline feasibility
+- Risk factors
+
+For the planned actions, provide:
+1. Priority ranking (critical/high/medium/low)
+2. Feasibility score (0-10)
+3. Recommended approach
+4. Potential risks and mitigation strategies
+
+Format as JSON:
+{
+  "decisions": [
+    {
+      "action_index": 0,
+      "priority": "high",
+      "feasibility": 8,
+      "recommendation": "...",
+      "risks": ["risk1", "risk2"],
+      "mitigation": "..."
+    }
+  ],
+  "overall_assessment": "...",
+  "critical_path_items": ["..."]
+}"""
+
+        user_prompt = f"""Planned actions to evaluate:
+{json.dumps(state.planned_actions[:3], default=str, indent=2)}
+
+Analyze these actions and provide recommendations:"""
+
+        try:
+            response = self._call_nemotron(system_prompt, user_prompt, json_mode=True)
+            json_str = self._extract_json(response)
+            decisions_data = json.loads(json_str)
+
+            state.messages.append({
+                "role": "assistant",
+                "agent": "decision_agent",
+                "content": f"Decision analysis: {decisions_data.get('overall_assessment', 'Analysis complete')}",
+                "decisions_data": decisions_data
+            })
+
+            _LOGGER.info(f"Decision Agent: Analyzed {len(decisions_data.get('decisions', []))} actions")
+            return state
+
+        except Exception as e:
+            _LOGGER.warning(f"Decision Agent error: {e}")
+            state.messages.append({
+                "role": "assistant",
+                "agent": "decision_agent",
+                "content": f"Decision agent completed with note: {str(e)}"
+            })
+            return state
+
+    async def risk_assessment_agent(self, state: OrchestratorState, config: RunnableConfig):
+        """Risk assessment agent: Identifies and evaluates risks in planned actions"""
+        _LOGGER.info("Risk Assessment Agent: Identifying potential risks...")
+
+        system_prompt = """You are a risk assessment agent specialized in identifying potential issues
+in meeting action items and scheduled events. Evaluate risks in:
+- Calendar conflicts and double-bookings
+- Timeline compression and feasibility
+- Resource conflicts and availability
+- Dependency chain breaks
+- External blocker risks
+
+For each identified risk, provide:
+1. Risk description
+2. Severity (critical/high/medium/low)
+3. Affected action(s)
+4. Mitigation strategy
+5. Owner recommendation
+
+Format as JSON:
+{
+  "risks": [
+    {
+      "description": "...",
+      "severity": "high",
+      "affected_actions": [0, 1],
+      "mitigation": "...",
+      "owner": "..."
+    }
+  ],
+  "overall_risk_level": "medium",
+  "critical_blockers": ["..."],
+  "recommendations": ["..."]
+}"""
+
+        action_summary = f"""
+Actions: {len(state.planned_actions)}
+Calendar events: {len(state.calendar_events)}
+Transcript length: {len(state.audio_transcript)} chars
+
+Planned actions summary:
+{json.dumps([{"title": a.event_title, "date": a.event_date} for a in state.planned_actions[:3]], indent=2)}
+"""
+
+        user_prompt = f"""Meeting context and planned actions:
+{action_summary}
+
+Identify risks and provide assessment:"""
+
+        try:
+            response = self._call_nemotron(system_prompt, user_prompt, json_mode=True)
+            json_str = self._extract_json(response)
+            risk_data = json.loads(json_str)
+
+            state.messages.append({
+                "role": "assistant",
+                "agent": "risk_assessment_agent",
+                "content": f"Risk assessment: {risk_data.get('overall_risk_level', 'unknown')} risk level identified",
+                "risk_data": risk_data
+            })
+
+            _LOGGER.info(f"Risk Assessment Agent: Identified {len(risk_data.get('risks', []))} risks")
+            return state
+
+        except Exception as e:
+            _LOGGER.warning(f"Risk Assessment Agent error: {e}")
+            state.messages.append({
+                "role": "assistant",
+                "agent": "risk_assessment_agent",
+                "content": f"Risk assessment completed with note: {str(e)}"
+            })
+            return state
+
 
 # Build the LangGraph workflow
 def create_orchestrator_graph():
@@ -1072,18 +1291,24 @@ def create_orchestrator_graph():
     
     # Add nodes
     workflow.add_node("analyze_transcript", orchestrator.analyze_transcript)
+    workflow.add_node("research_agent", orchestrator.research_agent)
     workflow.add_node("fetch_calendar_context", orchestrator.fetch_calendar_context)
     workflow.add_node("find_related_meetings", orchestrator.find_related_meetings)
     workflow.add_node("plan_actions", orchestrator.plan_actions)
+    workflow.add_node("decision_agent", orchestrator.decision_agent)
+    workflow.add_node("risk_assessment_agent", orchestrator.risk_assessment_agent)
     workflow.add_node("execute_actions", orchestrator.execute_actions)
     workflow.add_node("generate_summary", orchestrator.generate_summary)
-    
-    # Define the flow
+
+    # Define the flow: Analyze → Research → Fetch Calendar → Find Related → Plan → Decide → Risk Assess → Execute → Summarize
     workflow.add_edge(START, "analyze_transcript")
-    workflow.add_edge("analyze_transcript", "fetch_calendar_context")
+    workflow.add_edge("analyze_transcript", "research_agent")
+    workflow.add_edge("research_agent", "fetch_calendar_context")
     workflow.add_edge("fetch_calendar_context", "find_related_meetings")
     workflow.add_edge("find_related_meetings", "plan_actions")
-    workflow.add_edge("plan_actions", "execute_actions")
+    workflow.add_edge("plan_actions", "decision_agent")
+    workflow.add_edge("decision_agent", "risk_assessment_agent")
+    workflow.add_edge("risk_assessment_agent", "execute_actions")
     workflow.add_edge("execute_actions", "generate_summary")
     workflow.add_edge("generate_summary", END)
     

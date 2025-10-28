@@ -1,0 +1,531 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NVIDIA Nemotron - Agentic Workflow Visualizer</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/vis/4.21.0/vis.min.js"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/vis/4.21.0/vis.min.css" rel="stylesheet" type="text/css" />
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Roboto', 'Segoe UI', sans-serif;
+            background: linear-gradient(135deg, #0a0e27 0%, #1a1f3a 100%);
+            color: #fff;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        /* Header with NVIDIA Branding */
+        .header {
+            background: rgba(0, 0, 0, 0.5);
+            border-bottom: 2px solid #76B900;
+            padding: 15px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            backdrop-filter: blur(10px);
+        }
+
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .nvidia-logo {
+            font-size: 20px;
+            font-weight: bold;
+            color: #76B900;
+            text-shadow: 0 0 10px rgba(118, 185, 0, 0.5);
+        }
+
+        .title {
+            font-size: 18px;
+            font-weight: 300;
+            letter-spacing: 1px;
+        }
+
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 13px;
+            color: #aaa;
+        }
+
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #76B900;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .main-container {
+            display: flex;
+            height: calc(100vh - 60px);
+            gap: 0;
+        }
+
+        /* Graph Canvas */
+        #graph-container {
+            flex: 1;
+            position: relative;
+            background: linear-gradient(135deg, #0f1422 0%, #1a1f3a 100%);
+            border-right: 2px solid #76B900;
+        }
+
+        #network {
+            width: 100%;
+            height: 100%;
+        }
+
+        /* Right Panel - Details */
+        .details-panel {
+            width: 350px;
+            background: rgba(15, 20, 34, 0.95);
+            backdrop-filter: blur(10px);
+            border-left: 2px solid #76B900;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .panel-header {
+            padding: 15px;
+            border-bottom: 1px solid #76B900;
+            font-size: 14px;
+            font-weight: bold;
+            color: #76B900;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .panel-content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 15px;
+        }
+
+        .agent-card {
+            background: rgba(118, 185, 0, 0.1);
+            border: 1px solid #76B900;
+            border-radius: 8px;
+            padding: 12px;
+            margin-bottom: 10px;
+            font-size: 12px;
+        }
+
+        .agent-card h4 {
+            color: #76B900;
+            margin-bottom: 5px;
+            font-size: 13px;
+        }
+
+        .agent-card p {
+            color: #ccc;
+            line-height: 1.4;
+            margin-bottom: 5px;
+        }
+
+        .nemotron-call {
+            background: rgba(100, 150, 255, 0.1);
+            border: 1px solid #6496ff;
+            border-radius: 6px;
+            padding: 10px;
+            margin-bottom: 8px;
+            font-size: 11px;
+        }
+
+        .nemotron-call .label {
+            color: #6496ff;
+            font-weight: bold;
+            margin-bottom: 3px;
+        }
+
+        .nemotron-call .metric {
+            color: #aaa;
+            display: flex;
+            justify-content: space-between;
+            margin: 2px 0;
+            font-family: 'Courier New', monospace;
+        }
+
+        .nemotron-call .preview {
+            background: rgba(0, 0, 0, 0.3);
+            padding: 5px;
+            border-radius: 4px;
+            margin-top: 5px;
+            color: #888;
+            max-height: 60px;
+            overflow: hidden;
+            font-size: 10px;
+            line-height: 1.3;
+        }
+
+        .scrollbar-hidden::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        .scrollbar-hidden::-webkit-scrollbar-track {
+            background: rgba(118, 185, 0, 0.05);
+        }
+
+        .scrollbar-hidden::-webkit-scrollbar-thumb {
+            background: #76B900;
+            border-radius: 3px;
+        }
+
+        .panel-content {
+            scrollbar-width: thin;
+            scrollbar-color: #76B900 transparent;
+        }
+
+        .panel-content {
+            scrollbar-width: thin;
+        }
+
+        /* Timeline at bottom */
+        .timeline {
+            background: rgba(0, 0, 0, 0.5);
+            border-top: 1px solid #76B900;
+            padding: 10px 15px;
+            font-size: 11px;
+            color: #aaa;
+            max-height: 100px;
+            overflow-y: auto;
+        }
+
+        .timeline-item {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 5px;
+            padding: 5px;
+            border-left: 2px solid #76B900;
+            padding-left: 10px;
+        }
+
+        .timeline-time {
+            color: #76B900;
+            min-width: 70px;
+            font-family: 'Courier New', monospace;
+        }
+
+        .timeline-event {
+            color: #ccc;
+        }
+
+        /* Loading Animation */
+        .loading {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #76B900;
+            animation: bounce 1.4s infinite;
+        }
+
+        @keyframes bounce {
+            0%, 100% { opacity: 0.2; }
+            50% { opacity: 1; }
+        }
+
+        /* Tooltip */
+        .tooltip {
+            position: absolute;
+            background: rgba(0, 0, 0, 0.9);
+            color: #76B900;
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 11px;
+            border: 1px solid #76B900;
+            z-index: 100;
+            display: none;
+            pointer-events: none;
+            max-width: 200px;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 20px;
+            color: #666;
+        }
+
+        .empty-state p {
+            margin: 10px 0;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="header-left">
+            <div class="nvidia-logo">█ NVIDIA</div>
+            <div class="title">Nemotron Agentic Workflow Orchestrator</div>
+        </div>
+        <div class="status-indicator">
+            <div class="status-dot"></div>
+            <span>Live Visualization</span>
+        </div>
+    </div>
+
+    <div class="main-container">
+        <div id="graph-container">
+            <div id="network"></div>
+        </div>
+
+        <div class="details-panel">
+            <div class="panel-header">Workflow Details</div>
+            <div class="panel-content scrollbar-hidden" id="details-content">
+                <div class="empty-state">
+                    <p><span class="loading"></span></p>
+                    <p>Ready to visualize agentic workflow</p>
+                    <p style="font-size: 10px; color: #555; margin-top: 15px;">
+                        Upload an audio file and transcribe to see agents in action
+                    </p>
+                </div>
+            </div>
+            <div class="timeline" id="timeline">
+                <div style="color: #76B900; font-weight: bold; padding: 5px 0;">Execution Timeline</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="tooltip" id="tooltip"></div>
+
+    <script>
+        // Agent Workflow Graph Data
+        const agentWorkflow = {
+            nodes: [
+                { id: 'start', label: 'START', color: '#76B900', shape: 'box', font: { size: 12, color: '#000' } },
+                { id: 'analyze', label: 'Analyze\nTranscript', color: '#76B900', shape: 'box', font: { size: 11 } },
+                { id: 'research', label: 'Research\nAgent', color: '#6496ff', shape: 'box', font: { size: 11 } },
+                { id: 'fetch', label: 'Fetch\nCalendar', color: '#76B900', shape: 'box', font: { size: 11 } },
+                { id: 'find', label: 'Find\nMeetings', color: '#76B900', shape: 'box', font: { size: 11 } },
+                { id: 'plan', label: 'Plan\nActions', color: '#76B900', shape: 'box', font: { size: 11 } },
+                { id: 'decide', label: 'Decision\nAgent', color: '#ff9800', shape: 'box', font: { size: 11 } },
+                { id: 'risk', label: 'Risk\nAssessment', color: '#ff5722', shape: 'box', font: { size: 11 } },
+                { id: 'execute', label: 'Execute\nActions', color: '#76B900', shape: 'box', font: { size: 11 } },
+                { id: 'summarize', label: 'Generate\nSummary', color: '#76B900', shape: 'box', font: { size: 11 } },
+                { id: 'end', label: 'END', color: '#76B900', shape: 'box', font: { size: 12, color: '#000' } }
+            ],
+            edges: [
+                { from: 'start', to: 'analyze', arrows: 'to' },
+                { from: 'analyze', to: 'research', arrows: 'to' },
+                { from: 'research', to: 'fetch', arrows: 'to' },
+                { from: 'fetch', to: 'find', arrows: 'to' },
+                { from: 'find', to: 'plan', arrows: 'to' },
+                { from: 'plan', to: 'decide', arrows: 'to' },
+                { from: 'decide', to: 'risk', arrows: 'to' },
+                { from: 'risk', to: 'execute', arrows: 'to' },
+                { from: 'execute', to: 'summarize', arrows: 'to' },
+                { from: 'summarize', to: 'end', arrows: 'to' }
+            ]
+        };
+
+        // Agent Descriptions
+        const agentDescriptions = {
+            'analyze': 'Analyzes meeting transcript for key topics, decisions, and action items',
+            'research': 'Extracts entities and gathers background context on projects and people',
+            'fetch': 'Fetches calendar context and existing events from Google Calendar',
+            'find': 'Identifies related past meetings and similar discussions',
+            'plan': 'Plans specific actions with details, attendees, and scheduling info',
+            'decide': 'Analyzes proposed actions, provides feasibility scores and recommendations',
+            'risk': 'Identifies risks, conflicts, and mitigation strategies',
+            'execute': 'Executes planned calendar events and sends notifications',
+            'summarize': 'Generates final meeting summary and action item tracking'
+        };
+
+        let currentAgent = null;
+        let nemotronCalls = [];
+        let executionLog = [];
+
+        // Initialize vis.js Network
+        const container = document.getElementById('network');
+        const data = {
+            nodes: new vis.DataSet(agentWorkflow.nodes),
+            edges: new vis.DataSet(agentWorkflow.edges)
+        };
+
+        const options = {
+            physics: {
+                enabled: true,
+                stabilization: { iterations: 200 },
+                barnesHut: { gravitationalConstant: -30000, springLength: 150 }
+            },
+            interaction: {
+                navigationButtons: true,
+                keyboard: true
+            },
+            layout: {
+                hierarchical: {
+                    enabled: true,
+                    direction: 'UD',
+                    sortMethod: 'directed',
+                    nodeSpacing: 100,
+                    levelSeparation: 150
+                }
+            }
+        };
+
+        const network = new vis.Network(container, data, options);
+
+        // Handle node clicks to show details
+        network.on('click', function(params) {
+            if (params.nodes.length > 0) {
+                const nodeId = params.nodes[0];
+                showAgentDetails(nodeId);
+            }
+        });
+
+        // Show agent details in right panel
+        function showAgentDetails(agentId) {
+            const agent = agentWorkflow.nodes.find(n => n.id === agentId);
+            if (!agent) return;
+
+            let html = `<div class="agent-card">
+                <h4>${agent.label.replace(/\n/g, ' ')}</h4>
+                <p>${agentDescriptions[agentId] || 'Agent processing...'}</p>
+                <p style="color: #888; font-size: 11px; margin-top: 8px;">
+                    Click agents in the graph to view details
+                </p>
+            </div>`;
+
+            document.getElementById('details-content').innerHTML = html;
+        }
+
+        // Function to simulate agent activation (for demo)
+        function activateAgent(agentId) {
+            currentAgent = agentId;
+            const node = data.nodes.get(agentId);
+            if (node) {
+                node.color = { background: '#76B900', border: '#fff', highlight: { background: '#92e000', border: '#fff' } };
+                data.nodes.update(node);
+                showAgentDetails(agentId);
+                addTimelineEvent(`${node.label.replace(/\n/g, ' ')} activated`);
+            }
+        }
+
+        // Add to execution timeline
+        function addTimelineEvent(event) {
+            const time = new Date().toLocaleTimeString();
+            const item = document.createElement('div');
+            item.className = 'timeline-item';
+            item.innerHTML = `<div class="timeline-time">${time}</div><div class="timeline-event">${event}</div>`;
+            const timeline = document.getElementById('timeline');
+
+            // Keep timeline from growing too large
+            while (timeline.children.length > 6) {
+                timeline.removeChild(timeline.children[1]);
+            }
+            timeline.appendChild(item);
+            timeline.scrollTop = timeline.scrollHeight;
+        }
+
+        // Simulate workflow progression for demo
+        async function simulateWorkflow() {
+            const agents = ['analyze', 'research', 'fetch', 'find', 'plan', 'decide', 'risk', 'execute', 'summarize'];
+
+            for (const agent of agents) {
+                await new Promise(resolve => setTimeout(resolve, 800));
+                activateAgent(agent);
+
+                // Add a mock Nemotron call
+                const mockNemotronCall = {
+                    timestamp: new Date().toLocaleTimeString(),
+                    model: 'llama-3.3-nemotron-super-49b-v1.5',
+                    latency_ms: Math.random() * 2000 + 500,
+                    preview: `Processing ${agent} phase with Nemotron analysis...`
+                };
+                nemotronCalls.push(mockNemotronCall);
+                updateNemotronDisplay();
+            }
+        }
+
+        // Display Nemotron API calls
+        function updateNemotronDisplay() {
+            let html = '';
+            const lastCalls = nemotronCalls.slice(-3);
+
+            if (lastCalls.length === 0) {
+                html = '<div class="empty-state"><p>No Nemotron calls yet</p></div>';
+            } else {
+                for (const call of lastCalls) {
+                    html += `
+                        <div class="nemotron-call">
+                            <div class="label">NVIDIA Nemotron API</div>
+                            <div class="metric">
+                                <span>Model:</span>
+                                <span>${call.model.split('/')[1]}</span>
+                            </div>
+                            <div class="metric">
+                                <span>Latency:</span>
+                                <span>${call.latency_ms.toFixed(0)}ms</span>
+                            </div>
+                            <div class="preview">${call.preview}</div>
+                        </div>
+                    `;
+                }
+            }
+
+            if (nemotronCalls.length > 3) {
+                html += `<div style="text-align: center; color: #666; font-size: 11px; margin-top: 10px;">
+                    +${nemotronCalls.length - 3} more calls
+                </div>`;
+            }
+
+            document.getElementById('details-content').innerHTML = html;
+        }
+
+        // Auto-zoom to fit graph
+        setTimeout(() => {
+            network.fit({ animation: { duration: 1000, easingFunction: 'easeInOutQuad' } });
+        }, 500);
+
+        // Initialize with first agent
+        setTimeout(() => {
+            showAgentDetails('analyze');
+            // For demo, show the workflow - remove this for production
+            if (window.location.hash === '#demo') {
+                simulateWorkflow();
+            }
+        }, 1000);
+
+        // Expose functions for external control
+        window.workflowVisualizer = {
+            activateAgent,
+            addTimelineEvent,
+            addNemotronCall: function(call) {
+                nemotronCalls.push(call);
+                updateNemotronDisplay();
+            },
+            reset: function() {
+                nemotronCalls = [];
+                executionLog = [];
+                data.nodes.forEach(node => {
+                    if (node.id !== 'start' && node.id !== 'end') {
+                        node.color = '#76B900';
+                        data.nodes.update(node);
+                    }
+                });
+                document.getElementById('details-content').innerHTML = '<div class="empty-state"><p>Workflow reset</p></div>';
+            }
+        };
+
+        // Log for debugging
+        console.log('Workflow Visualizer initialized');
+        console.log('Use: window.workflowVisualizer.activateAgent("agent_id") to control flow');
+    </script>
+</body>
+</html>
