@@ -1604,6 +1604,10 @@ Analyze these actions and provide recommendations:"""
             json_str = self._extract_json(clean_response)
             decisions_data = json.loads(json_str)
 
+            # Handle case where LLM returns a list instead of a dictionary
+            if isinstance(decisions_data, list):
+                decisions_data = {"decisions": decisions_data, "overall_assessment": "Analysis complete"}
+
             state.messages.append({
                 "role": "assistant",
                 "agent": "decision_agent",
@@ -1735,6 +1739,10 @@ Identify risks and provide assessment:"""
 
             json_str = self._extract_json(clean_response)
             risk_data = json.loads(json_str)
+
+            # Handle case where LLM returns a list instead of a dictionary
+            if isinstance(risk_data, list):
+                risk_data = {"risks": risk_data, "overall_risk_level": "medium"}
 
             state.messages.append({
                 "role": "assistant",
