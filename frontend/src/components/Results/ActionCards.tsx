@@ -81,12 +81,16 @@ const ActionCards: React.FC<ActionCardsProps> = ({ actions }) => {
               height: '100%',
               display: 'flex',
               flexDirection: 'column',
-              backgroundColor: 'rgba(255, 255, 255, 0.05)',
+              backgroundColor: 'rgba(26, 26, 26, 0.4)',
+              backdropFilter: 'blur(10px)',
+              WebkitBackdropFilter: 'blur(10px)',
               border: '1px solid rgba(118, 185, 0, 0.3)',
+              boxShadow: '0 8px 32px 0 rgba(0, 0, 0, 0.37)',
               transition: 'all 0.3s ease',
               '&:hover': {
                 transform: 'translateY(-4px)',
-                boxShadow: '0 8px 16px rgba(118, 185, 0, 0.2)',
+                backgroundColor: 'rgba(26, 26, 26, 0.6)',
+                boxShadow: '0 12px 40px rgba(118, 185, 0, 0.3)',
                 border: '1px solid rgba(118, 185, 0, 0.6)',
               },
             }}

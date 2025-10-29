@@ -23,6 +23,7 @@ import {
   ExpandMore,
   ExpandLess,
   Info,
+  Notes,
 } from '@mui/icons-material';
 import { ThemeProvider } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
@@ -54,7 +55,7 @@ const AppContent: React.FC = () => {
   const { workflow: workflowState, startWorkflow, handleWorkflowEvent, resetWorkflow } = useWorkflow();
 
   // Local state
-  const [showTranscription, setShowTranscription] = useState(false);
+  const [isTranscriptionExpanded, setIsTranscriptionExpanded] = useState(true);
   const [showWorkflowViz, setShowWorkflowViz] = useState(false);
   const [showResults, setShowResults] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
@@ -134,7 +135,6 @@ const AppContent: React.FC = () => {
 
       // Initialize workflow and show cards
       startWorkflow();
-      setShowTranscription(false);
       setShowWorkflowViz(true);  // Show cards immediately
       setShowResults(false);
 
@@ -164,7 +164,6 @@ const AppContent: React.FC = () => {
   const handleTranscription = useCallback(async (audioData: Blob) => {
     try {
       setStatusMessage('Transcribing audio...');
-      setShowTranscription(true);
 
       // Transcribe audio
       const transcriptionText = await transcribeAudio(audioData);
@@ -266,8 +265,9 @@ const AppContent: React.FC = () => {
       {/* App Bar */}
       <AppBar position="static" sx={{ backgroundColor: '#1a1a1a' }}>
         <Toolbar>
+          <Mic sx={{ fontSize: 32, mr: 2, color: '#76B900' }} />
           <Typography variant="h5" component="div" sx={{ flexGrow: 1, fontWeight: 700 }}>
-            🎙️ NVIDIA Meeting Assistant
+            NVIDIA Meeting Assistant
           </Typography>
           <Tooltip title="Settings">
             <IconButton
@@ -294,7 +294,19 @@ const AppContent: React.FC = () => {
 
         {/* Settings Panel */}
         <Collapse in={showSettings}>
-          <Paper sx={{ p: 3, mb: 3, backgroundColor: 'rgba(255, 255, 255, 0.05)' }}>
+          <Paper sx={{
+            p: 3,
+            mb: 3,
+            backgroundColor: 'rgba(26, 26, 26, 0.4)',
+            backdropFilter: 'blur(10px)',
+            WebkitBackdropFilter: 'blur(10px)',
+            border: '1px solid rgba(118, 185, 0, 0.2)',
+            boxShadow: '0 8px 32px 0 rgba(0, 0, 0, 0.37)',
+            '&:hover': {
+              backgroundColor: 'rgba(26, 26, 26, 0.6)',
+              borderColor: 'rgba(118, 185, 0, 0.4)',
+            },
+          }}>
             <Typography variant="h6" gutterBottom sx={{ color: '#76B900' }}>
               Settings
             </Typography>
@@ -335,8 +347,15 @@ const AppContent: React.FC = () => {
             p: 4,
             mb: 4,
             textAlign: 'center',
-            backgroundColor: 'rgba(255, 255, 255, 0.05)',
+            backgroundColor: 'rgba(26, 26, 26, 0.4)',
+            backdropFilter: 'blur(10px)',
+            WebkitBackdropFilter: 'blur(10px)',
             border: '2px solid rgba(118, 185, 0, 0.3)',
+            boxShadow: '0 8px 32px 0 rgba(0, 0, 0, 0.37)',
+            '&:hover': {
+              backgroundColor: 'rgba(26, 26, 26, 0.6)',
+              borderColor: 'rgba(118, 185, 0, 0.4)',
+            },
           }}
         >
           <Typography variant="h4" gutterBottom sx={{ color: '#76B900', fontWeight: 700 }}>
@@ -407,8 +426,20 @@ const AppContent: React.FC = () => {
         </Paper>
 
         {/* Transcription Section */}
-        {showTranscription && transcript && (
-          <Paper sx={{ p: 3, mb: 4, backgroundColor: 'rgba(255, 255, 255, 0.03)' }}>
+        {transcript && (
+          <Paper sx={{
+            p: 3,
+            mb: 4,
+            backgroundColor: 'rgba(26, 26, 26, 0.4)',
+            backdropFilter: 'blur(10px)',
+            WebkitBackdropFilter: 'blur(10px)',
+            border: '1px solid rgba(118, 185, 0, 0.2)',
+            boxShadow: '0 8px 32px 0 rgba(0, 0, 0, 0.37)',
+            '&:hover': {
+              backgroundColor: 'rgba(26, 26, 26, 0.6)',
+              borderColor: 'rgba(118, 185, 0, 0.4)',
+            },
+          }}>
             <Box
               sx={{
                 display: 'flex',
@@ -416,17 +447,21 @@ const AppContent: React.FC = () => {
                 alignItems: 'center',
                 mb: 2,
                 cursor: 'pointer',
+                transition: 'all 0.3s ease',
               }}
-              onClick={() => setShowTranscription(!showTranscription)}
+              onClick={() => setIsTranscriptionExpanded(!isTranscriptionExpanded)}
             >
-              <Typography variant="h6" sx={{ color: '#76B900', fontWeight: 600 }}>
-                📝 Transcription
-              </Typography>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                <Notes sx={{ fontSize: 24, color: '#76B900' }} />
+                <Typography variant="h6" sx={{ color: '#76B900', fontWeight: 600 }}>
+                  Transcription
+                </Typography>
+              </Box>
               <IconButton size="small">
-                {showTranscription ? <ExpandLess /> : <ExpandMore />}
+                {isTranscriptionExpanded ? <ExpandLess /> : <ExpandMore />}
               </IconButton>
             </Box>
-            <Collapse in={showTranscription}>
+            <Collapse in={isTranscriptionExpanded}>
               <Divider sx={{ mb: 2, borderColor: 'rgba(118, 185, 0, 0.2)' }} />
               <Typography
                 variant="body2"

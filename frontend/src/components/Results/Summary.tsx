@@ -8,6 +8,7 @@ import {
 import {
   Email,
   CheckCircle,
+  Assignment,
 } from '@mui/icons-material';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -204,10 +205,17 @@ const Summary: React.FC<SummaryProps> = ({ summary, showEmailSent = true }) => {
     <Paper
       sx={{
         p: 4,
-        backgroundColor: 'rgba(20, 20, 20, 0.8)',
+        backgroundColor: 'rgba(26, 26, 26, 0.4)',
+        backdropFilter: 'blur(10px)',
+        WebkitBackdropFilter: 'blur(10px)',
         border: '1px solid rgba(118, 185, 0, 0.3)',
+        boxShadow: '0 8px 32px 0 rgba(0, 0, 0, 0.37)',
         position: 'relative',
         overflow: 'hidden',
+        '&:hover': {
+          backgroundColor: 'rgba(26, 26, 26, 0.6)',
+          borderColor: 'rgba(118, 185, 0, 0.4)',
+        },
       }}
     >
       {/* Decorative gradient overlay */}
@@ -222,20 +230,18 @@ const Summary: React.FC<SummaryProps> = ({ summary, showEmailSent = true }) => {
         }}
       />
 
-      <Typography
-        variant="h5"
-        gutterBottom
-        sx={{
-          color: '#76B900',
-          fontWeight: 700,
-          mb: 3,
-          display: 'flex',
-          alignItems: 'center',
-          gap: 1,
-        }}
-      >
-        📋 Meeting Summary
-      </Typography>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 3 }}>
+        <Assignment sx={{ fontSize: 32, color: '#76B900' }} />
+        <Typography
+          variant="h5"
+          sx={{
+            color: '#76B900',
+            fontWeight: 700,
+          }}
+        >
+          Meeting Summary
+        </Typography>
+      </Box>
 
       {/* Summary Content - Rendered Markdown */}
       <Box
@@ -283,7 +289,7 @@ const Summary: React.FC<SummaryProps> = ({ summary, showEmailSent = true }) => {
                 fontWeight: 600,
               }}
             >
-              📧 Email summary sent to all attendees
+              Email summary sent to all attendees
             </Typography>
             <CheckCircle sx={{ color: '#76B900', fontSize: 20 }} />
           </Box>
