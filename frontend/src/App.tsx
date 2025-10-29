@@ -285,7 +285,17 @@ const AppContent: React.FC = () => {
       {/* App Bar */}
       <AppBar position="static" sx={{ backgroundColor: '#1a1a1a', position: 'relative', zIndex: 1 }}>
         <Toolbar>
-          <Mic sx={{ fontSize: 32, mr: 2, color: '#76B900' }} />
+          <Box
+            component="img"
+            src="/1.png"
+            alt="NemoPM Logo"
+            sx={{
+              height: 40,
+              width: 40,
+              mr: 2,
+              filter: 'drop-shadow(0 0 4px rgba(118, 185, 0, 0.5))',
+            }}
+          />
           <Typography variant="h5" component="div" sx={{ flexGrow: 1, fontWeight: 700 }}>
             NemoPM
           </Typography>
