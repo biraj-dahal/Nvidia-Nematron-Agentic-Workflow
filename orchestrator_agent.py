@@ -1182,19 +1182,32 @@ What actions should be taken? Return ONLY JSON."""
 
         emit_workflow_event("stage_start", "Summary Generator", {"description": "Generating meeting summary and sending notifications..."}, logs)
 
-        system_prompt = """You are a meeting assistant. Create a clear, structured summary organized by sections.
+        system_prompt = """You are a meeting assistant. Create a clear, structured summary organized by sections using markdown format.
 
-Format your response with these EXACT section headers (use emojis for clarity):
-📋 Meeting Overview - 2-3 sentences about the meeting
-🎯 Key Topics Discussed - Bullet list of main discussion points
-📅 Scheduled Events - Details of calendar events created
-⚡ Action Items - Specific action items and responsibilities
+Format your response with these EXACT markdown section headers:
+
+## Meeting Overview
+[2-3 sentences about the meeting]
+
+## Key Topics Discussed
+- Bullet point 1
+- Bullet point 2
+- Bullet point 3
+
+## Scheduled Events
+- **Event Title**: Date, attendees, duration
+- **Another Event**: Date, attendees, duration
+
+## Action Items
+- [ ] Specific action item (assigned to: person name)
+- [ ] Another action item (assigned to: person name)
 
 Requirements:
 - Be specific and actionable
 - Keep each section concise but detailed
 - No introductions, explanations, or reasoning - just the facts
-- Start directly with the 📋 emoji"""
+- Use markdown formatting: **bold** for emphasis, - for bullets, [ ] for tasks
+- Start directly with the ## Meeting Overview header"""
 
         context = {
             "transcript_preview": state.audio_transcript[:500],
@@ -1306,6 +1319,10 @@ Generate 3-4 specific next steps the team should take:"""
 
     def _create_html_summary(self, summary: str, state: OrchestratorState) -> str:
         """Create HTML formatted email summary"""
+        import markdown2
+
+        # Convert markdown to HTML
+        summary_html = markdown2.markdown(summary, extras=['fenced-code-blocks', 'tables', 'task_lists'])
 
         # Build actions table
         actions_html = ""
@@ -1381,6 +1398,21 @@ Generate 3-4 specific next steps the team should take:"""
         <head>
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <style>
+                .summary-content h2 {{ color: #667eea; margin-top: 20px; margin-bottom: 10px; font-size: 18px; }}
+                .summary-content h3 {{ color: #667eea; margin-top: 15px; margin-bottom: 8px; font-size: 16px; }}
+                .summary-content ul {{ margin: 10px 0; padding-left: 20px; }}
+                .summary-content li {{ margin-bottom: 8px; line-height: 1.6; }}
+                .summary-content strong {{ font-weight: bold; color: #333; }}
+                .summary-content em {{ font-style: italic; color: #555; }}
+                .summary-content code {{ background-color: #f0f0f0; padding: 2px 6px; border-radius: 3px; font-family: monospace; }}
+                .summary-content pre {{ background-color: #f5f5f5; padding: 12px; border-radius: 4px; overflow-x: auto; }}
+                .summary-content pre code {{ background-color: transparent; padding: 0; }}
+                .summary-content table {{ width: 100%; border-collapse: collapse; margin: 15px 0; }}
+                .summary-content th {{ background-color: #667eea; color: white; padding: 12px; text-align: left; border: 1px solid #667eea; }}
+                .summary-content td {{ padding: 10px 12px; border: 1px solid #ddd; }}
+                .summary-content input[type="checkbox"] {{ margin-right: 8px; }}
+            </style>
         </head>
         <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 800px; margin: 0 auto; padding: 20px;">
             <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; border-radius: 10px; margin-bottom: 30px;">
@@ -1389,8 +1421,8 @@ Generate 3-4 specific next steps the team should take:"""
             </div>
 
             <div style="background: #f5f5f5; padding: 20px; border-radius: 8px; margin-bottom: 25px;">
-                <h2 style="margin-top: 0; color: #667eea;">📝 Meeting Summary</h2>
-                <div style="white-space: pre-wrap; line-height: 1.8; color: #444;">{summary}</div>
+                <h2 style="margin-top: 0; color: #667eea; margin-bottom: 15px;">Meeting Summary</h2>
+                <div class="summary-content" style="color: #444;">{summary_html}</div>
             </div>
 
             <div style="margin-bottom: 25px;">
