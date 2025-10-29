@@ -429,6 +429,18 @@ Respond ONLY with valid JSON in exactly this format (no other text):
             _LOGGER.info(f"Extracted JSON: {json_str[:200]}...")
             analysis = json.loads(json_str)
 
+            # Handle case where LLM returns a list instead of a dictionary
+            if isinstance(analysis, list):
+                analysis = {
+                    "meeting_title": "Meeting Discussion",
+                    "is_past_meeting": False,
+                    "mentioned_dates": [],
+                    "participants": [],
+                    "key_topics": [],
+                    "action_items": analysis if analysis else [],
+                    "summary": "Analysis result"
+                }
+
             # Add output logs
             logs.append({
                 "type": "output",
