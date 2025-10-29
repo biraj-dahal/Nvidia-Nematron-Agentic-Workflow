@@ -274,7 +274,7 @@ const AppContent: React.FC = () => {
           left: 0,
           right: 0,
           bottom: 0,
-          backgroundColor: 'rgba(10, 10, 10, 0.85)',
+          backgroundColor: 'rgba(10, 10, 10, 0.55)',
           zIndex: 0,
           pointerEvents: 'none',
         },
@@ -290,10 +290,10 @@ const AppContent: React.FC = () => {
             src="/1.png"
             alt="NemoPM Logo"
             sx={{
-              height: 40,
-              width: 40,
-              mr: 2,
-              filter: 'drop-shadow(0 0 4px rgba(118, 185, 0, 0.5))',
+              height: 60,
+              width: 60,
+              mr: 3,
+              filter: 'drop-shadow(0 0 6px rgba(118, 185, 0, 0.6))',
             }}
           />
           <Typography variant="h5" component="div" sx={{ flexGrow: 1, fontWeight: 700 }}>
