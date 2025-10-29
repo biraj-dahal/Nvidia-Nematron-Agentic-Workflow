@@ -259,15 +259,35 @@ const AppContent: React.FC = () => {
     !orchestratorResult.execution_results;
 
   return (
-    <Box sx={{ minHeight: '100vh', backgroundColor: '#0a0a0a' }}>
+    <Box
+      sx={{
+        minHeight: '100vh',
+        backgroundImage: 'url(/nvidia-bg.webp)',
+        backgroundSize: 'cover',
+        backgroundPosition: 'center',
+        backgroundAttachment: 'fixed',
+        backgroundColor: '#0a0a0a',
+        '&::before': {
+          content: '""',
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(10, 10, 10, 0.85)',
+          zIndex: 0,
+          pointerEvents: 'none',
+        },
+      }}
+    >
       <CssBaseline />
 
       {/* App Bar */}
-      <AppBar position="static" sx={{ backgroundColor: '#1a1a1a' }}>
+      <AppBar position="static" sx={{ backgroundColor: '#1a1a1a', position: 'relative', zIndex: 1 }}>
         <Toolbar>
           <Mic sx={{ fontSize: 32, mr: 2, color: '#76B900' }} />
           <Typography variant="h5" component="div" sx={{ flexGrow: 1, fontWeight: 700 }}>
-            NVIDIA Meeting Assistant
+            NemoPM
           </Typography>
           <Tooltip title="Settings">
             <IconButton
@@ -280,7 +300,7 @@ const AppContent: React.FC = () => {
         </Toolbar>
       </AppBar>
 
-      <Container maxWidth="xl" sx={{ py: 4 }}>
+      <Container maxWidth="xl" sx={{ py: 4, position: 'relative', zIndex: 1 }}>
         {/* Error Alert */}
         {error && (
           <Alert
