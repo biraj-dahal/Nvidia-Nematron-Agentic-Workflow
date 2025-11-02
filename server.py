@@ -322,6 +322,7 @@ def transcribe():
 def orchestrate():
     """
     Run the meeting orchestrator workflow on a transcript.
+    Returns 202 Accepted immediately, then streams results via SSE /stream-workflow.
 
     Expects JSON body:
     {
@@ -329,13 +330,23 @@ def orchestrate():
         "auto_execute": true/false (optional, defaults to true)
     }
 
-    Returns:
+    Returns immediately with 202 Accepted:
     {
-        "planned_actions": [...],
-        "execution_results": [...],
-        "summary": "...",
-        "calendar_events_count": N,
-        "related_meetings_count": N
+        "status": "started",
+        "message": "Workflow initiated. Check /stream-workflow for real-time updates."
+    }
+
+    Results are streamed via SSE with final event:
+    {
+        "type": "workflow_complete",
+        "agent": "N/A",
+        "results": {
+            "planned_actions": [...],
+            "execution_results": [...],
+            "summary": "...",
+            "calendar_events_count": N,
+            "related_meetings_count": N
+        }
     }
     """
     try:
@@ -353,19 +364,52 @@ def orchestrate():
 
         print(f"Running orchestrator (auto_execute={auto_execute}, transcript length={len(transcript)})")
 
-        # Run the orchestrator workflow (async) with event broadcasting
-        result = asyncio.run(run_orchestrator(transcript, auto_execute, event_callback=broadcast_workflow_event))
+        # Start the workflow in a background thread (non-blocking)
+        def run_workflow_background():
+            try:
+                result = asyncio.run(run_orchestrator(transcript, auto_execute, event_callback=broadcast_workflow_event))
 
-        print(f"Orchestrator completed: {len(result['planned_actions'])} actions planned")
+                print(f"Orchestrator completed: {len(result['planned_actions'])} actions planned")
 
-        return jsonify(result), 200
+                # Broadcast final completion event via SSE
+                completion_event = {
+                    "type": "workflow_complete",
+                    "agent": "N/A",
+                    "results": result
+                }
+                broadcast_workflow_event(completion_event)
+                print(f"✓ Workflow completion event broadcasted")
+
+            except Exception as e:
+                print(f"Orchestrator background error: {e}")
+                import traceback
+                traceback.print_exc()
+
+                # Broadcast error event via SSE
+                error_event = {
+                    "type": "workflow_error",
+                    "agent": "N/A",
+                    "error": str(e),
+                    "details": traceback.format_exc()
+                }
+                broadcast_workflow_event(error_event)
+
+        # Start background thread (daemon=True so it won't prevent app shutdown)
+        workflow_thread = threading.Thread(target=run_workflow_background, daemon=True)
+        workflow_thread.start()
+
+        # Return 202 Accepted immediately (don't wait for workflow)
+        return jsonify({
+            "status": "started",
+            "message": "Workflow initiated. Check /stream-workflow for real-time updates."
+        }), 202
 
     except Exception as e:
-        print(f"Orchestrator error: {e}")
+        print(f"Orchestrator request error: {e}")
         import traceback
         traceback.print_exc()
         return jsonify({
-            "error": f"Orchestrator failed: {str(e)}",
+            "error": f"Orchestrator request failed: {str(e)}",
             "details": traceback.format_exc()
         }), 500
 
