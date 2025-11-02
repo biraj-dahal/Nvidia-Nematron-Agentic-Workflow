@@ -12,12 +12,6 @@ from flask_cors import CORS
 from werkzeug.utils import secure_filename
 import shutil # Used for file cleanup
 
-try:
-    from pydub import AudioSegment
-    PYDUB_AVAILABLE = True
-except ImportError:
-    PYDUB_AVAILABLE = False
-
 # Import orchestrator for meeting analysis
 from orchestrator_agent import run_orchestrator
 
@@ -91,38 +85,6 @@ def convert_to_nvidia_format(input_path, output_path):
         print("Error: ffmpeg is not installed or not in your PATH.")
         return False
 
-
-def convert_audio_with_pydub(input_path, output_path):
-    """Converts audio to 16kHz, 16-bit, mono WAV using pydub (pure Python fallback)."""
-    try:
-        if not PYDUB_AVAILABLE:
-            print("Pydub not available for audio conversion")
-            return False
-
-        # Load the audio file (pydub auto-detects format)
-        print(f"Loading audio from {input_path}...")
-        audio = AudioSegment.from_file(input_path)
-
-        # Convert to mono
-        if audio.channels > 1:
-            print(f"Converting {audio.channels} channels to mono...")
-            audio = audio.set_channels(1)
-
-        # Resample to 16000 Hz
-        if audio.frame_rate != 16000:
-            print(f"Resampling from {audio.frame_rate} Hz to 16000 Hz...")
-            audio = audio.set_frame_rate(16000)
-
-        # Export as WAV with 16-bit PCM
-        print(f"Exporting to {output_path}...")
-        audio.export(output_path, format="wav", bitrate="16k", parameters=["-q:a", "9"])
-
-        print("Audio conversion successful")
-        return True
-
-    except Exception as e:
-        print(f"Pydub conversion error: {e}")
-        return False
 
 def run_nvidia_transcription(filepath):
     """Executes the NVIDIA ASR script using gRPC and captures the transcription."""
@@ -313,14 +275,9 @@ def transcribe():
             converted_path = converted_path_target
             print(f"   ✓ FFmpeg conversion successful")
         else:
-            # Fallback to pydub
-            print(f"   ✗ FFmpeg conversion failed. Attempting pydub conversion...")
-            if convert_audio_with_pydub(uploaded_path, converted_path_target):
-                converted_path = converted_path_target
-                print(f"   ✓ Pydub conversion successful")
-            else:
-                print(f"   ⚠ All conversions failed. Attempting direct transcription with original file...")
-                # Continue with original file as last resort
+            # FFmpeg failed, attempt transcription with original file
+            print(f"   ⚠ FFmpeg conversion failed. Attempting direct transcription with original file...")
+            # Continue with original file as last resort
 
         if not os.path.exists(converted_path):
             raise RuntimeError(f"Converted audio file not found: {converted_path}")
