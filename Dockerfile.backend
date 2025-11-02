@@ -38,7 +38,9 @@ COPY orchestrator_agent.py .
 COPY calender_tool.py .
 COPY email_tool.py .
 COPY attendee_mapping.json .
-COPY python-clients python-clients
+
+# Copy only the ASR scripts from python-clients (needed for transcription)
+COPY python-clients/scripts/asr python-clients/scripts/asr
 
 # Create uploads directory
 RUN mkdir -p uploads
