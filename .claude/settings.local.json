@@ -14,7 +14,14 @@
       "Bash(cat:*)",
       "Bash(kill:*)",
       "Bash(jobs)",
-      "Read(//private/tmp/**)"
+      "Read(//private/tmp/**)",
+      "Bash(sudo systemctl restart:*)",
+      "Bash(sudo systemctl status:*)",
+      "Bash(docker-compose build:*)",
+      "Bash(docker-compose ps:*)",
+      "Bash(netstat:*)",
+      "Bash(ss:*)",
+      "Bash(git check-ignore:*)"
     ],
     "deny": [],
     "ask": []

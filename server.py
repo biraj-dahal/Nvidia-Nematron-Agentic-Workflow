@@ -414,5 +414,5 @@ def orchestrate():
 
 
 if __name__ == '__main__':
-    print(f"Starting ASR Backend Server on http://localhost:4000. Ensure ffmpeg is installed and API_KEY is set.")
-    app.run(host='127.0.0.1', port=4000, debug=True, use_reloader=False)
+    print(f"Starting ASR Backend Server on http://0.0.0.0:4000. Ensure ffmpeg is installed and API_KEY is set.")
+    app.run(host='0.0.0.0', port=4000, debug=True, use_reloader=False)

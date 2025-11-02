@@ -12,23 +12,34 @@ This is an AI-powered meeting assistant that uses NVIDIA Nemotron LLM and LangGr
 
 ## Development Commands
 
-### Backend
-```bash
-# Start Flask server (handles /transcribe endpoint + SSE streaming)
-python server.py
+### Backend Setup & Running
 
-# Run main orchestrator workflow with test transcript
+```bash
+# Install dependencies
+pip install -r requirements.txt
+
+# Set NVIDIA API key
+export API_KEY="your_nvidia_api_key_here"
+
+# Start Flask server (handles /transcribe endpoint + SSE streaming)
+python server.py  # Listens on http://localhost:5000
+
+# Run main orchestrator workflow with test transcript (standalone)
 python orchestrator_agent.py
 
-# Test Google Calendar integration
+# Test Google Calendar integration (requires OAuth setup)
 python calender_tool.py
 ```
 
-### Frontend
+### Frontend Setup & Running
+
 ```bash
 cd frontend
 
-# Start development server (port 3000, proxies to localhost:5000)
+# Install dependencies
+npm install
+
+# Start development server (port 3000, proxies API calls to localhost:5000)
 npm start
 
 # Run Jest tests in watch mode
@@ -36,6 +47,39 @@ npm test
 
 # Build for production
 npm run build
+
+# Lint TypeScript/React code
+npm run lint
+```
+
+### Testing
+
+**Backend Tests** (python-clients/tests):
+```bash
+# Run unit tests
+cd python-clients
+python -m pytest tests/unit/
+
+# Run with verbose output
+python -m pytest tests/unit/ -v
+
+# Run specific test file
+python -m pytest tests/unit/test_nlp.py
+
+# Run integration tests (requires NVIDIA API credentials)
+python -m pytest tests/integration/ -v
+```
+
+**Full Stack Testing**:
+```bash
+# Terminal 1: Start backend
+python server.py
+
+# Terminal 2: Start frontend
+cd frontend && npm start
+
+# Terminal 3: Test workflow
+# Open http://localhost:3000 and record audio to test end-to-end
 ```
 
 ## Environment Configuration
@@ -138,31 +182,120 @@ The React 19 + TypeScript + Material-UI frontend is structured as:
 5. `AgentCard` components re-render with updated logs/status
 6. Logs grouped by type in expandable accordions
 
-## Backend Core Modules
+## Backend Architecture
 
-### orchestrator_agent.py
-- `MeetingOrchestrator` class contains all agent node functions
-- `create_orchestrator_graph()` builds/compiles LangGraph workflow
-- `emit_workflow_event()` broadcasts agent progress via SSE
-- `extract_thinking_content()` extracts `<think>` tags from LLM responses
-- `_call_nemotron()` helper for LLM API calls (temp 0.2, top_p 0.95, max_tokens 4096)
-- `_extract_json()` parses JSON from responses, handles markdown code blocks
+### File Organization
 
-### calender_tool.py (note: misspelled "calendar")
-- Google Calendar API integration with OAuth 2.0
+**Root Level Files** (meeting orchestration):
+- `server.py` - Flask server with SSE streaming and audio transcription
+- `orchestrator_agent.py` - LangGraph workflow orchestration (9 agents)
+- `calender_tool.py` - Google Calendar API integration (OAuth 2.0)
+- `email_tool.py` - Gmail API integration for sending HTML summaries
+- `attendee_mapping.json` - Name-to-email mappings with fuzzy matching config
+
+**python-clients/** (NVIDIA SDK for ASR/NLP):
+- Separate package for NVIDIA Riva and NIM client integrations
+- Contains reusable ASR clients and tests in `tests/unit/` and `tests/integration/`
+
+### Core Backend Modules
+
+#### orchestrator_agent.py (Primary)
+- `MeetingOrchestrator` class - Contains all 9 agent node functions
+- `create_orchestrator_graph()` - Builds/compiles LangGraph StateGraph workflow
+- `emit_workflow_event()` - Broadcasts agent progress to SSE clients in real-time
+- `extract_thinking_content()` - Parses `<think>...</think>` tags from Nemotron responses
+- `_call_nemotron()` - Helper for LLM API calls (temp 0.2, top_p 0.95, max_tokens 4096)
+- `_extract_json()` - Parses JSON from LLM responses, handles markdown code blocks
+- `fuzzy_match_name()` - Maps meeting attendees to emails using sequence matching
+- `load_attendee_mapping()` - Loads attendee_mapping.json or fallback hardcoded mapping
+
+#### server.py (Flask API)
+Main endpoints:
+- `POST /transcribe` - Audio upload, ffmpeg conversion to 16kHz mono WAV, NVIDIA Riva ASR transcription
+- `GET /stream-workflow` - Server-Sent Events (SSE) stream for real-time workflow updates
+- `POST /run-orchestrator` - Trigger orchestrator with transcript text
+- `convert_to_nvidia_format()` - Uses ffmpeg or pydub for audio conversion
+
+#### calender_tool.py (Note: Misspelled "calendar")
+- Google Calendar API v3 integration with OAuth 2.0
 - Key methods: `fetch_events()`, `create_event()`, `add_notes_to_event()`, `find_available_slots()`
-- Timezone: `America/New_York` via `pytz.timezone()`
-- Calendar ID hardcoded in `CALEN_ID` variable
+- Timezone: Hardcoded `America/New_York` via `pytz.timezone()`
+- Calendar ID: Hardcoded in `CALEN_ID` variable (should be moved to environment)
+- Supports 2-phase action execution (find slots first, then create events)
 
-### email_tool.py
+#### email_tool.py
 - Gmail API integration with OAuth 2.0
-- `send_email()` supports plain text and HTML bodies (multipart MIME)
+- `send_email()` - Supports plain text and HTML body formatting (multipart MIME)
+- Used for sending HTML-formatted meeting summaries to stakeholders
 
-### server.py
-- Flask server with two main endpoints:
-  - `POST /transcribe` - Audio file upload, 16kHz mono WAV conversion via ffmpeg, ASR via NVIDIA Riva
-  - `GET /stream-workflow` - SSE stream for real-time agent updates
-  - `POST /run-orchestrator` - Trigger orchestrator with transcript
+### Data Flow
+
+```
+Audio Input → convert_to_nvidia_format() → NVIDIA Riva ASR
+   ↓
+Flask /transcribe endpoint captures transcript
+   ↓
+/run-orchestrator triggers workflow
+   ↓
+LangGraph orchestrates 9 agents:
+  1. analyze_transcript → 2. fetch_calendar_context → 3. find_related_meetings
+  4. plan_actions → 5. decision_agent → 6. risk_assessment_agent
+  7. execute_actions → 8. generate_summary → END
+   ↓
+emit_workflow_event() streams updates to SSE clients
+   ↓
+generate_summary() sends email + calender_tool creates/updates events
+```
+
+## Frontend-Backend Communication
+
+### API Contract
+
+**Audio Recording Flow:**
+1. Frontend (`Recording` component) captures WAV blob from WebAudio API
+2. Sends POST to `/transcribe` with FormData containing audio file
+3. Backend converts to 16kHz mono, calls NVIDIA Riva ASR
+4. Returns JSON: `{ transcript: "text", duration: ms }`
+
+**Workflow Execution Flow:**
+1. Frontend sends POST to `/run-orchestrator` with `{ transcript: "text" }`
+2. Backend starts LangGraph workflow in background
+3. Agents call `emit_workflow_event()` to broadcast progress
+4. Frontend connects to `GET /stream-workflow` (SSE EventSource)
+5. Frontend receives real-time log events: `{ agent, type, log, timestamp }`
+6. Workflow completes, final event includes `execution_results` and email status
+
+**Event Types Streamed:**
+- `thinking` - AI reasoning from `<think>` tags
+- `input` - Data being processed
+- `processing` - Steps being executed
+- `api_call` - LLM API calls with latency
+- `output` - Agent results/conclusions
+- `timing` - Performance measurements
+- `error` - Exceptions during execution
+
+### Development Patterns
+
+**Adding a New Agent:**
+1. Define async function in `MeetingOrchestrator` class (orchestrator_agent.py)
+2. Function signature: `async def agent_name(self, state: OrchestratorState) -> Dict`
+3. Use `self.emit_workflow_event()` for logging/progress
+4. Return updated state dict with modified fields
+5. Add node to graph in `create_orchestrator_graph()`: `graph.add_node("node_name", self.agent_name)`
+6. Add edge to route from previous node
+7. Frontend automatically displays new agent in workflow visualization
+
+**Modifying Agent Logging:**
+1. Call `emit_workflow_event(agent="agent_name", log_type="type", log="message")`
+2. Log types must match TypeScript enum in `frontend/src/types/workflow.ts`
+3. Logs are queued and broadcast to all SSE-connected clients
+4. Frontend groups logs by type in expandable accordions
+
+**Frontend State Management:**
+1. Global state in `WorkflowContext` (agentCards, progress, expanded/collapsed)
+2. `useWorkflowStream` hook manages EventSource connection and state updates
+3. Component re-renders triggered by context updates
+4. Agent card expanded state persists during workflow execution
 
 ## Action Planning
 
@@ -283,34 +416,89 @@ Edit `attendee_mapping.json` and add to `attendees` array. Adjust `fuzzy_match_t
 
 ## Configuration & Troubleshooting
 
+### Environment Variable Setup
+
+**Required:**
+- `API_KEY` - NVIDIA API key for Nemotron and Riva services
+
+**Optional (defaults shown):**
+```bash
+export API_KEY="your_nvidia_api_key_here"
+export NEMOTRON_MODEL="nvidia/llama-3.3-nemotron-super-49b-v1.5"
+```
+
 ### Email Recipients
-Hardcoded in `orchestrator_agent.py:generate_summary()`:
+Hardcoded in `orchestrator_agent.py` → `MeetingOrchestrator.generate_summary()`:
 ```python
 to_addresses=["rahual.rai@bison.howard.edu", "kritika.pant@bison.howard.edu", "biraj.dahal@bison.howard.edu"]
 ```
-Change these addresses in the `generate_summary()` method.
+**To change:** Edit the list in the `generate_summary()` method. These should be environment variables in production.
 
 ### Calendar Configuration
-Update `CALEN_ID` in `calender_tool.py:28`:
+Hardcoded in `calender_tool.py:28`:
 ```python
 CALEN_ID = 'your-calendar-id@group.calendar.google.com'
 ```
-Find calendar ID in Google Calendar settings.
+Find your calendar ID in Google Calendar → Settings → Calendar integration section. **Should be moved to environment variable.**
 
-### Resetting Google OAuth
-If encountering 403 errors:
-1. Delete `token.pickle`
-2. Re-run to trigger OAuth re-authentication
-3. Ensure OAuth consent screen includes these scopes:
+### Common Development Issues
+
+**Issue: "API_KEY environment variable is not set"**
+- Solution: `export API_KEY="your-key-here"` before running Flask server
+- Or add to `.env` file and load with `python-dotenv`
+
+**Issue: Frontend can't connect to backend (CORS errors)**
+- Check that backend is running: `python server.py` should show "* Running on http://127.0.0.1:5000"
+- Frontend proxy is set to `http://localhost:4000` in package.json (may need to update)
+- Verify Flask CORS is initialized: `CORS(app)` in server.py
+
+**Issue: SSE connection drops or doesn't receive events**
+- Check Network tab in DevTools: filter for "stream-workflow" request
+- Should be "pending" with Content-Type `text/event-stream`
+- If connection closes, check backend logs for workflow errors
+- Event queue may be full if processing is slow - check `broadcast_workflow_event()` logs
+
+**Issue: Audio transcription fails**
+- Ensure FFmpeg is installed: `which ffmpeg`
+- Check file is valid WAV: `ffmpeg -i recording.wav`
+- Verify NVIDIA Riva connectivity: requires `grpc.nvcf.nvidia.com:443` access
+- Try `python-clients/scripts/asr/transcribe_file.py` directly to debug
+
+**Issue: Calendar events not being created**
+1. Delete generated OAuth credentials and re-authenticate: `rm token.pickle`
+2. Ensure OAuth scopes include:
    - `https://www.googleapis.com/auth/calendar`
    - `https://www.googleapis.com/auth/gmail.send`
+3. Check email configured in attendee_mapping.json matches attendees in transcript
+4. Look for "FIND_SLOT" action - if no available slots, defaults to 2 PM EST
+
+**Issue: Frontend types don't match backend events**
+- Ensure `frontend/src/types/workflow.ts` has all log types your agents emit
+- Agent must send exactly: `emit_workflow_event(agent="name", log_type="type", log="msg")`
+- Valid types: `thinking`, `input`, `processing`, `api_call`, `output`, `timing`, `error`
 
 ### Debugging Logs
-Set logging level:
+Enable debug logging:
 ```python
+import logging
 logging.basicConfig(level=logging.DEBUG)
 ```
-All modules use `_LOGGER` configured at module level for logging.
+
+Backend modules use `_LOGGER` for structured logging. Check orchestrator_agent.py line ~30 for logger initialization.
+
+Monitor workflow in real-time:
+```bash
+# Terminal 1: Backend with verbose logging
+python server.py 2>&1 | grep -E "broadcast|emit|agent"
+
+# Terminal 2: Frontend dev mode
+cd frontend && npm start
+
+# Terminal 3: Trigger workflow
+curl -X POST http://localhost:5000/run-orchestrator \
+  -H "Content-Type: application/json" \
+  -d '{"transcript": "schedule a meeting with rahual tomorrow at 2pm"}'
+```
 
 ## Development Notes
 
@@ -338,8 +526,88 @@ All modules use `_LOGGER` configured at module level for logging.
 5. **Real-Time SSE** - Fixed EventSource connection to explicit backend URL (not proxy)
 6. **Multi-Action Planning** - Generate multiple distinct actions from single meeting transcript
 
+## Key Code Patterns & Architectural Decisions
+
+### State Management (OrchestratorState)
+Pydantic model defined in orchestrator_agent.py containing:
+- `audio_transcript` - Input text
+- `calendar_events` - CalendarEvent list (60-day window)
+- `related_past_meetings` - Semantically similar meetings found by agent
+- `planned_actions` - List of MeetingAction objects (CREATE_EVENT, ADD_NOTES, etc.)
+- `execution_results` - Results from executing actions
+- `messages` - LangGraph message history for context
+
+**Pattern:** Each agent receives full state, modifies relevant fields, returns updated state dict. LangGraph's `add_messages` annotation handles message history automatically.
+
+### Event Emission Pattern
+```python
+self.emit_workflow_event(
+    agent="agent_name",
+    log_type="processing",  # Must match TypeScript enum
+    log="Human readable message"
+)
+```
+Every major step should emit at least:
+1. `input` - What the agent received
+2. `processing` - What it's doing
+3. `output` or `error` - Result
+
+### Action Execution Pattern (Two-Phase)
+**Phase 1** (Parallel): FIND_SLOT, ADD_NOTES, UPDATE_EVENT
+- Results stored in execution_results
+- Next phase reads these results
+
+**Phase 2** (Sequential): CREATE_EVENT
+- Uses slot recommendations from Phase 1
+- Falls back to 2 PM EST if no slot available
+
+### LangGraph Workflow Structure
+```python
+graph = StateGraph(OrchestratorState)
+graph.add_node("node_name", self.agent_function)
+graph.add_edge("source_node", "target_node")
+graph.add_edge("final_node", END)
+graph.set_entry_point("first_node")
+return graph.compile()
+```
+
+## Known Limitations & Technical Debt
+
+1. **Hardcoded Configuration**
+   - Email recipients hardcoded in generate_summary()
+   - Calendar ID hardcoded in calender_tool.py
+   - NVIDIA API key passed directly (should use environment variables)
+   - **Fix:** Move to environment variables or config file
+
+2. **SSE Queue Management**
+   - Event queue can overflow if processing slow (workflow_event_queues list)
+   - Dead queues removed only during broadcasts
+   - **Fix:** Implement max queue size with timeout eviction
+
+3. **Fuzzy Matching Sensitivity**
+   - Single threshold (0.8) for all attendees
+   - May generate false positives or miss legitimate matches
+   - **Fix:** Per-attendee thresholds or ML-based matching
+
+4. **Audio Conversion Fallbacks**
+   - Uses FFmpeg first, falls back to pydub
+   - pydub less reliable for WAV conversion
+   - **Fix:** Standardize on FFmpeg, make pydub optional
+
+5. **OAuth Token Handling**
+   - Generated on first run, persists locally
+   - No token refresh mechanism
+   - **Fix:** Implement refresh token flow
+
+6. **Error Handling**
+   - Limited retry logic for API calls
+   - 403 errors from Google Calendar often require manual re-auth
+   - **Fix:** Implement exponential backoff and auto-retry
+
 ## Installation Prerequisites
 
 1. **Backend Dependencies**: `pip install -r requirements.txt`
+   - Note: requirements.txt has full Anaconda export (many unused dependencies)
+   - Consider creating minimal requirements file for faster installation
 2. **Frontend Dependencies**: `cd frontend && npm install`
 3. **System Requirements**: FFmpeg installed and in PATH (for audio processing)
