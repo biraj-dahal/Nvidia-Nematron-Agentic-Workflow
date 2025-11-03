@@ -10,6 +10,36 @@ This is an AI-powered meeting assistant that uses NVIDIA Nemotron LLM and LangGr
 **Backend**: Flask + LangGraph + NVIDIA Nemotron on port 5000
 **Architecture**: Separate frontend/backend with Server-Sent Events (SSE) streaming for real-time workflow visualization
 
+## Project Structure
+
+```
+.
+├── frontend/                           # React 19 + TypeScript + MUI application
+│   ├── src/
+│   │   ├── components/                 # React components (Recording, Workflow, Results)
+│   │   ├── hooks/                      # Custom hooks (useMediaRecorder, useWorkflowStream, useOrchestrator)
+│   │   ├── context/                    # Global state (WorkflowContext)
+│   │   ├── types/                      # TypeScript interfaces (workflow.ts)
+│   │   └── theme/                      # NVIDIA green theme with MUI overrides
+│   ├── package.json                    # Frontend dependencies + proxy config
+│   └── public/index.html                # HTML entry point
+├── python-clients/                     # NVIDIA Riva/NIM SDK package
+│   ├── riva/                           # Riva gRPC client wrappers
+│   ├── scripts/asr/                    # ASR utilities (used by server.py)
+│   ├── tests/                          # Unit and integration tests
+│   └── setup.py                        # Package metadata
+├── Dockerfile.backend                  # Multi-stage Docker build for Flask backend
+├── Dockerfile.frontend                 # Multi-stage Docker build for React + nginx
+├── server.py                           # Flask API server (transcribe, orchestrate, stream-workflow)
+├── orchestrator_agent.py               # LangGraph workflow orchestration (9 agents)
+├── calender_tool.py                    # Google Calendar API integration
+├── email_tool.py                       # Gmail API for sending summaries
+├── attendee_mapping.json               # Name-to-email mappings for calendar
+├── requirements.txt                    # Full Anaconda export (all dependencies)
+├── requirements-docker.txt             # Minimal dependencies for Docker
+└── CLAUDE.md                           # This file
+```
+
 ## Development Commands
 
 ### Backend Setup & Running
@@ -52,6 +82,29 @@ npm run build
 npm run lint
 ```
 
+### Docker Build & Deployment
+
+```bash
+# Build backend Docker image (multi-stage build)
+docker build -f Dockerfile.backend -t nemotron-backend:latest .
+
+# Build frontend Docker image (multi-stage with nginx)
+docker build -f Dockerfile.frontend -t nemotron-frontend:latest .
+
+# Run backend container
+docker run -p 5000:5000 \
+  -e API_KEY="your_nvidia_api_key" \
+  -v $(pwd)/uploads:/app/uploads \
+  nemotron-backend:latest
+
+# Run frontend container
+docker run -p 3000:80 \
+  --link nemotron-backend:nemotron-backend \
+  nemotron-frontend:latest
+```
+
+**Note**: Dockerfiles use `requirements-docker.txt` (minimal dependencies) instead of full `requirements.txt` (Anaconda export)
+
 ### Testing
 
 **Backend Tests** (python-clients/tests):
@@ -82,6 +135,18 @@ cd frontend && npm start
 # Open http://localhost:3000 and record audio to test end-to-end
 ```
 
+## Port Configuration
+
+**Development Mode**:
+- Frontend: http://localhost:3000 (React dev server)
+- Backend: http://localhost:5000 (Flask server)
+- Frontend package.json proxies API requests to http://localhost:4000 (configurable)
+
+**Docker Mode**:
+- Frontend: http://localhost:3000 (nginx serving built React SPA)
+- Backend: http://localhost:5000 (Flask inside container)
+- Nginx proxies `/api`, `/transcribe`, `/stream-workflow`, `/orchestrate` requests to backend service
+
 ## Environment Configuration
 
 ### Setup Required Files
@@ -94,9 +159,10 @@ cd frontend && npm start
    See `.env.example` for all available configuration options.
 
 2. **Google OAuth credentials**:
-   - Place OAuth client secret as `client_secret_*.apps.googleusercontent.com.json` in project root
-   - First run auto-generates `token.pickle` after authentication
-   - If auth fails, delete `token.pickle` and re-run to re-authenticate
+   - Place OAuth client secret file in project root with exact name: `client_secret_{CLIENT_ID}.apps.googleusercontent.com.json`
+   - On first run, `calender_tool.py` or `email_tool.py` will trigger OAuth authentication in browser
+   - Authorization token automatically cached (not in git)
+   - To re-authenticate: delete cached credentials and re-run
 
 3. **Attendee mapping** (`attendee_mapping.json`):
    - Maps names to email addresses for calendar invites
@@ -194,8 +260,15 @@ The React 19 + TypeScript + Material-UI frontend is structured as:
 - `attendee_mapping.json` - Name-to-email mappings with fuzzy matching config
 
 **python-clients/** (NVIDIA SDK for ASR/NLP):
-- Separate package for NVIDIA Riva and NIM client integrations
-- Contains reusable ASR clients and tests in `tests/unit/` and `tests/integration/`
+- Separate package for NVIDIA Riva and NIM client integrations (Riva client >= 2.14.0)
+- Installable as `pip install -e python-clients` for development
+- Key structure:
+  - `riva/` - Riva gRPC client wrappers for ASR and NLP
+  - `scripts/asr/` - Transcription utilities (used by server.py)
+  - `tests/unit/` - Unit tests for ASR clients
+  - `tests/integration/` - Integration tests (requires NVIDIA credentials)
+  - `setup.py` - Package metadata and dependencies
+- Called by `server.py:run_nvidia_transcription()` via subprocess for audio processing
 
 ### Core Backend Modules
 
@@ -211,10 +284,11 @@ The React 19 + TypeScript + Material-UI frontend is structured as:
 
 #### server.py (Flask API)
 Main endpoints:
-- `POST /transcribe` - Audio upload, ffmpeg conversion to 16kHz mono WAV, NVIDIA Riva ASR transcription
-- `GET /stream-workflow` - Server-Sent Events (SSE) stream for real-time workflow updates
-- `POST /run-orchestrator` - Trigger orchestrator with transcript text
-- `convert_to_nvidia_format()` - Uses ffmpeg or pydub for audio conversion
+- `POST /transcribe` - Audio upload → ffmpeg conversion (16kHz mono WAV) → NVIDIA Riva ASR → returns JSON with transcript + duration
+- `POST /orchestrate` - Alias for /run-orchestrator (both trigger workflow)
+- `POST /run-orchestrator` - Trigger orchestrator with transcript text in background, returns JSON with workflow_id
+- `GET /stream-workflow` - Server-Sent Events (SSE) stream for real-time workflow updates (EventSource compatible)
+- `convert_to_nvidia_format()` - Helper: Uses ffmpeg (primary) with pydub fallback for audio conversion
 
 #### calender_tool.py (Note: Misspelled "calendar")
 - Google Calendar API v3 integration with OAuth 2.0
@@ -253,17 +327,27 @@ generate_summary() sends email + calender_tool creates/updates events
 
 **Audio Recording Flow:**
 1. Frontend (`Recording` component) captures WAV blob from WebAudio API
-2. Sends POST to `/transcribe` with FormData containing audio file
+2. Sends `POST /transcribe` with FormData: `{ "audio": File }`
 3. Backend converts to 16kHz mono, calls NVIDIA Riva ASR
-4. Returns JSON: `{ transcript: "text", duration: ms }`
+4. Returns JSON:
+   ```json
+   { "transcript": "meeting transcript text", "duration": 45000 }
+   ```
 
 **Workflow Execution Flow:**
-1. Frontend sends POST to `/run-orchestrator` with `{ transcript: "text" }`
-2. Backend starts LangGraph workflow in background
-3. Agents call `emit_workflow_event()` to broadcast progress
-4. Frontend connects to `GET /stream-workflow` (SSE EventSource)
-5. Frontend receives real-time log events: `{ agent, type, log, timestamp }`
-6. Workflow completes, final event includes `execution_results` and email status
+1. Frontend sends `POST /run-orchestrator` (or `/orchestrate`) with JSON:
+   ```json
+   { "transcript": "meeting transcript text" }
+   ```
+2. Backend returns immediately: `{ "status": "workflow started" }`
+3. Backend starts LangGraph workflow in background thread
+4. Agents call `emit_workflow_event()` to broadcast progress
+5. Frontend connects to `GET /stream-workflow` (SSE EventSource, Server-Sent Events)
+6. Frontend receives real-time log events via SSE:
+   ```
+   data: {"agent": "analyze_transcript", "type": "input", "log": "...", "timestamp": "..."}
+   ```
+7. Workflow completes, final event includes `execution_results` and email status
 
 **Event Types Streamed:**
 - `thinking` - AI reasoning from `<think>` tags
@@ -430,9 +514,9 @@ export NEMOTRON_MODEL="nvidia/llama-3.3-nemotron-super-49b-v1.5"
 ### Email Recipients
 Hardcoded in `orchestrator_agent.py` → `MeetingOrchestrator.generate_summary()`:
 ```python
-to_addresses=["rahual.rai@bison.howard.edu", "kritika.pant@bison.howard.edu", "biraj.dahal@bison.howard.edu"]
+to_addresses=["Dores.Lashley@SolarNyx.com"]
 ```
-**To change:** Edit the list in the `generate_summary()` method. These should be environment variables in production.
+**To change:** Edit the list in the `generate_summary()` method (line ~1277). These should be environment variables in production.
 
 ### Calendar Configuration
 Hardcoded in `calender_tool.py:28`:
@@ -448,9 +532,11 @@ Find your calendar ID in Google Calendar → Settings → Calendar integration s
 - Or add to `.env` file and load with `python-dotenv`
 
 **Issue: Frontend can't connect to backend (CORS errors)**
-- Check that backend is running: `python server.py` should show "* Running on http://127.0.0.1:5000"
-- Frontend proxy is set to `http://localhost:4000` in package.json (may need to update)
-- Verify Flask CORS is initialized: `CORS(app)` in server.py
+- Check backend is running: `python server.py` should show "* Running on http://127.0.0.1:5000"
+- In development: Frontend proxies to URL in `frontend/package.json` "proxy" field (default: http://localhost:4000)
+  - Update if backend runs on different port: `"proxy": "http://localhost:5000"`
+- In Docker: Nginx handles proxying via location blocks (see Dockerfile.frontend)
+- Verify Flask CORS is initialized: `CORS(app)` in server.py (enables cross-origin requests)
 
 **Issue: SSE connection drops or doesn't receive events**
 - Check Network tab in DevTools: filter for "stream-workflow" request
@@ -477,28 +563,46 @@ Find your calendar ID in Google Calendar → Settings → Calendar integration s
 - Agent must send exactly: `emit_workflow_event(agent="name", log_type="type", log="msg")`
 - Valid types: `thinking`, `input`, `processing`, `api_call`, `output`, `timing`, `error`
 
-### Debugging Logs
-Enable debug logging:
+### Debugging the Application
+
+**Frontend Debugging**:
+```bash
+# Terminal 1: Start backend
+python server.py
+
+# Terminal 2: Start frontend with verbose logging
+cd frontend && npm start
+
+# Browser DevTools:
+# - Network tab: Monitor /transcribe, /orchestrate, /stream-workflow requests
+# - Console: Check for JavaScript errors and React warnings
+# - Application → Cookies/LocalStorage: Verify no auth state issues
+```
+
+**Backend Debugging**:
+```bash
+# Terminal 1: Run backend with verbose output
+python server.py 2>&1 | tee server.log
+
+# Monitor specific events (e.g., agent emissions, broadcasts)
+tail -f server.log | grep -E "broadcast|emit|execute|error"
+
+# Terminal 2: Trigger workflow with curl
+curl -X POST http://localhost:5000/orchestrate \
+  -H "Content-Type: application/json" \
+  -d '{"transcript": "schedule a meeting with rahual tomorrow at 2pm"}'
+
+# Terminal 3: Monitor SSE stream in real-time
+curl -N http://localhost:5000/stream-workflow
+```
+
+**Enable Python Debug Logging**:
 ```python
 import logging
 logging.basicConfig(level=logging.DEBUG)
 ```
 
-Backend modules use `_LOGGER` for structured logging. Check orchestrator_agent.py line ~30 for logger initialization.
-
-Monitor workflow in real-time:
-```bash
-# Terminal 1: Backend with verbose logging
-python server.py 2>&1 | grep -E "broadcast|emit|agent"
-
-# Terminal 2: Frontend dev mode
-cd frontend && npm start
-
-# Terminal 3: Trigger workflow
-curl -X POST http://localhost:5000/run-orchestrator \
-  -H "Content-Type: application/json" \
-  -d '{"transcript": "schedule a meeting with rahual tomorrow at 2pm"}'
-```
+Backend modules use `_LOGGER` for structured logging (initialized in orchestrator_agent.py ~line 30)
 
 ## Development Notes
 
@@ -604,10 +708,35 @@ return graph.compile()
    - 403 errors from Google Calendar often require manual re-auth
    - **Fix:** Implement exponential backoff and auto-retry
 
-## Installation Prerequisites
+## Installation & Dependency Management
 
-1. **Backend Dependencies**: `pip install -r requirements.txt`
-   - Note: requirements.txt has full Anaconda export (many unused dependencies)
-   - Consider creating minimal requirements file for faster installation
+### Backend Requirements Files
+
+Two requirements files serve different purposes:
+
+**`requirements.txt`** (Full Anaconda export):
+- Contains ~300+ dependencies (from `pip freeze` output)
+- Includes all transitive dependencies explicitly pinned
+- **Use for**: Exact reproducibility across machines
+- **Drawback**: Very large, includes many unused packages
+- Installation: `pip install -r requirements.txt` (~5-10 min)
+
+**`requirements-docker.txt`** (Minimal/selected dependencies):
+- Contains only essential packages for core functionality
+- Includes: Flask, LangGraph, Google APIs, NVIDIA Riva, Pydantic, etc.
+- **Use for**: Faster Docker builds, cleaner images, development
+- Installation: `pip install -r requirements-docker.txt` (~1-2 min)
+
+**Recommendation**:
+- Development: Use `requirements-docker.txt` for faster iteration
+- Production/CI: Use `requirements.txt` for reproducibility
+- Docker: Dockerfiles use `requirements-docker.txt`
+
+### System Requirements
+
+1. **Backend Dependencies**: `pip install -r requirements-docker.txt` or `requirements.txt`
 2. **Frontend Dependencies**: `cd frontend && npm install`
-3. **System Requirements**: FFmpeg installed and in PATH (for audio processing)
+3. **System Requirements**:
+   - FFmpeg installed and in PATH (for audio processing) - run `which ffmpeg` to verify
+   - Python 3.12+ (recommend 3.12 or 3.13)
+   - Node.js 18+ (for frontend)

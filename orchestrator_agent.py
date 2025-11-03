@@ -1274,7 +1274,7 @@ Requirements:
         # Try to send email, but don't fail if permissions are insufficient
         try:
             self.email_tool.send_email(
-                to_addresses=["rahual.rai@bison.howard.edu", "kritika.pant@bison.howard.edu", "biraj.dahal@bison.howard.edu"],
+                to_addresses=["Dores.Lashley@SolarNyx.com"],
                 subject="AI Meeting Summary: " + datetime.now(TIMEZONE).strftime("%Y-%m-%d %I:%M %p %Z"),
                 body=summary,
                 html_body=html_summary

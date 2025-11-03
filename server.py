@@ -7,6 +7,9 @@ import httpx
 import wave
 import queue
 import threading
+import logging
+import traceback
+from datetime import datetime
 from flask import Flask, request, jsonify, Response
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
@@ -14,6 +17,14 @@ import shutil # Used for file cleanup
 
 # Import orchestrator for meeting analysis
 from orchestrator_agent import run_orchestrator
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(name)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+logger = logging.getLogger(__name__)
 
 # --- CONFIGURATION ---
 app = Flask(__name__)
@@ -42,24 +53,23 @@ if not NVIDIA_API_KEY:
 
 def broadcast_workflow_event(event_data: dict):
     """Broadcast a workflow event to all connected SSE clients"""
-    print(f"🔌 [broadcast_workflow_event] Broadcasting {event_data.get('type')} for {event_data.get('agent')} to {len(workflow_event_queues)} clients")
+    logger.debug(f"Broadcasting {event_data.get('type')} for {event_data.get('agent')} to {len(workflow_event_queues)} clients")
     with workflow_event_lock:
         # Remove dead queues and broadcast to active ones
         dead_queues = []
         for i, q in enumerate(workflow_event_queues):
             try:
                 q.put_nowait(event_data)
-                print(f"   ✓ Broadcasted to client {i}")
             except queue.Full:
                 # Queue is full, mark for removal
-                print(f"   ❌ Queue full for client {i}, removing...")
+                logger.warning(f"Queue full for client {i}, removing...")
                 dead_queues.append(i)
 
         # Remove dead queues in reverse order to maintain indices
         for i in reversed(dead_queues):
             workflow_event_queues.pop(i)
 
-        print(f"   ✓ Broadcast complete: {len(workflow_event_queues)} active clients")
+        logger.debug(f"Broadcast complete: {len(workflow_event_queues)} active clients")
 
 
 def convert_to_nvidia_format(input_path, output_path):
@@ -77,25 +87,21 @@ def convert_to_nvidia_format(input_path, output_path):
 
     try:
         subprocess.run(command, check=True, capture_output=True, text=True)
+        logger.debug(f"Audio converted successfully: {output_path}")
         return True
     except subprocess.CalledProcessError as e:
-        print(f"FFmpeg Error: {e.stderr}")
+        logger.error(f"FFmpeg error: {e.stderr}")
         return False
     except FileNotFoundError:
-        print("Error: ffmpeg is not installed or not in your PATH.")
+        logger.error("FFmpeg is not installed or not in PATH")
         return False
 
 
 def run_nvidia_transcription(filepath):
     """Executes the NVIDIA ASR script using gRPC and captures the transcription."""
 
-    print(f"\n   {'─'*76}")
-    print(f"   NVIDIA TRANSCRIPTION DETAILS")
-    print(f"   {'─'*76}")
-    print(f"   Input file: {filepath}")
-    print(f"   File exists: {os.path.exists(filepath)}")
-    if os.path.exists(filepath):
-        print(f"   File size: {os.path.getsize(filepath)} bytes")
+    logger.info(f"Starting transcription for: {filepath}")
+    logger.debug(f"File exists: {os.path.exists(filepath)}, Size: {os.path.getsize(filepath) if os.path.exists(filepath) else 'N/A'} bytes")
 
     # Construct the command to execute the NVIDIA script with correct parameters
     command = [
@@ -108,25 +114,20 @@ def run_nvidia_transcription(filepath):
         '--input-file', filepath
     ]
 
-    print(f"   Script path: {TRANSCRIPTION_SCRIPT_PATH}")
-    print(f"   Script exists: {os.path.exists(TRANSCRIPTION_SCRIPT_PATH)}")
-    print(f"   Command: {' '.join(command[:3])} ... (API key redacted)")
+    logger.debug(f"Script path: {TRANSCRIPTION_SCRIPT_PATH}, Exists: {os.path.exists(TRANSCRIPTION_SCRIPT_PATH)}")
 
     try:
-        print(f"\n   Executing command...")
+        logger.info("Executing transcription script...")
         # Execute the script with timeout
         result = subprocess.run(command, check=True, capture_output=True, text=True, timeout=60)
 
         # Get all output
         stdout = result.stdout.strip()
         stderr = result.stderr.strip()
-        print(f"   ✓ Script executed successfully")
-        print(f"   STDOUT length: {len(stdout)} chars")
-        print(f"   STDERR length: {len(stderr)} chars")
+        logger.debug(f"Script output: stdout={len(stdout)} chars, stderr={len(stderr)} chars")
 
         if stderr:
-            print(f"   STDERR preview: {stderr[:200]}")
-        print(f"   STDOUT preview: {stdout[:200]}")
+            logger.debug(f"STDERR: {stderr[:200]}")
 
         # The transcription text is typically the last line or contains "Transcription:"
         if "Transcription:" in stdout:
@@ -134,7 +135,7 @@ def run_nvidia_transcription(filepath):
             for line in stdout.splitlines():
                 if line.startswith('Transcription:'):
                     result_text = line.split(':', 1)[1].strip()
-                    print(f"   Result found in 'Transcription:' line")
+                    logger.info(f"Transcription completed: {len(result_text)} chars")
                     return result_text
 
         # If no "Transcription:" prefix, combine all non-empty lines
@@ -152,35 +153,30 @@ def run_nvidia_transcription(filepath):
         if lines:
             # Join all lines to get the complete transcript
             result_text = ' '.join(lines)
-            print(f"   Result found by combining {len(lines)} lines")
+            logger.info(f"Transcription completed: {len(result_text)} chars from {len(lines)} lines")
             return result_text
 
-        print(f"   ⚠ No transcription text found in output")
+        logger.warning("No transcription text found in output")
         return "ASR script executed, but no transcription text was found in the output."
 
     except subprocess.TimeoutExpired:
-        err_msg = f"ASR Error: Transcription script timed out (>60s)"
-        print(f"   ✗ {err_msg}")
-        return err_msg
+        err_msg = "Transcription script timed out (>60s)"
+        logger.error(err_msg)
+        return f"ASR Error: {err_msg}"
 
     except subprocess.CalledProcessError as e:
-        err_msg = f"ASR Error: Script failed with exit code {e.returncode}. STDERR: {e.stderr[:200]}"
-        print(f"   ✗ {err_msg}")
-        return err_msg
+        err_msg = f"Script failed with exit code {e.returncode}"
+        logger.error(f"{err_msg}: {e.stderr[:200]}")
+        return f"ASR Error: {err_msg}"
 
     except FileNotFoundError as e:
-        err_msg = f"ASR Error: Script file not found: {TRANSCRIPTION_SCRIPT_PATH}"
-        print(f"   ✗ {err_msg}")
-        return err_msg
+        err_msg = f"Script file not found: {TRANSCRIPTION_SCRIPT_PATH}"
+        logger.error(err_msg)
+        return f"ASR Error: {err_msg}"
 
     except Exception as e:
-        err_msg = f"ASR Error: An unexpected error occurred. {type(e).__name__}: {str(e)}"
-        print(f"   ✗ {err_msg}")
-        import traceback
-        traceback.print_exc()
-        return err_msg
-    finally:
-        print(f"   {'─'*76}\n")
+        logger.error(f"Unexpected error: {type(e).__name__}: {str(e)}", exc_info=True)
+        return f"ASR Error: {type(e).__name__}: {str(e)}"
 
 
 @app.route('/stream-workflow', methods=['GET'])
@@ -196,11 +192,11 @@ def stream_workflow():
 
         # Track if client is still connected
         client_id = id(client_queue)
-        print(f"✓ [/stream-workflow] Client connected (ID: {client_id}), total clients: {len(workflow_event_queues)}")
+        logger.info(f"Client {client_id} connected, total clients: {len(workflow_event_queues)}")
 
         try:
             # Send initial connection message
-            print(f"✓ [/stream-workflow] Sending connection confirmation to client {client_id}")
+            logger.info(f"Client {client_id} connected to workflow stream")
             yield f"data: {json.dumps({'type': 'connected', 'message': 'Connected to workflow stream'})}\n\n"
 
             # Stream events from the queue
@@ -208,18 +204,18 @@ def stream_workflow():
                 try:
                     # Get event from queue with timeout
                     event = client_queue.get(timeout=30)  # 30 second timeout for keep-alive
-                    print(f"📨 [/stream-workflow] Sending event to client {client_id}: {event.get('type')} {event.get('agent')}")
+                    logger.debug(f"Sending {event.get('type')} event for {event.get('agent')} to client {client_id}")
                     yield f"data: {json.dumps(event)}\n\n"
                 except queue.Empty:
                     # Send keep-alive heartbeat
-                    print(f"💓 [/stream-workflow] Sending heartbeat to client {client_id}")
+                    logger.debug(f"Sending heartbeat to client {client_id}")
                     yield f"data: {json.dumps({'type': 'heartbeat'})}\n\n"
         finally:
             # Clean up when client disconnects
             with workflow_event_lock:
                 if client_queue in workflow_event_queues:
                     workflow_event_queues.remove(client_queue)
-            print(f"❌ [/stream-workflow] Client disconnected (ID: {client_id}), remaining clients: {len(workflow_event_queues)}")
+            logger.info(f"Client {client_id} disconnected, remaining clients: {len(workflow_event_queues)}")
 
     return Response(event_generator(), mimetype='text/event-stream', headers={
         'Cache-Control': 'no-cache',
@@ -237,85 +233,66 @@ def transcribe():
     uploaded_path = None
 
     try:
-        print(f"\n{'='*80}")
-        print("TRANSCRIBE REQUEST RECEIVED")
-        print(f"{'='*80}")
+        logger.info("Transcribe request received")
 
         if 'audioFile' not in request.files:
-            print("ERROR: No audioFile in request.files")
-            print(f"Available files: {request.files.keys()}")
+            logger.error(f"No audioFile in request. Available: {list(request.files.keys())}")
             return jsonify({"error": "No audio file provided"}), 400
 
         audio_file = request.files['audioFile']
-        print(f"1. File received: {audio_file.filename} (type: {audio_file.content_type})")
+        logger.info(f"Audio file received: {audio_file.filename} ({audio_file.content_type})")
 
         filename = secure_filename(audio_file.filename)
         uploaded_path = os.path.join(temp_dir, filename)
 
         # 1. Save the uploaded file
-        print(f"2. Saving to: {uploaded_path}")
+        logger.debug(f"Saving audio to: {uploaded_path}")
         audio_file.save(uploaded_path)
 
         if not os.path.exists(uploaded_path):
             raise RuntimeError(f"File failed to save: {uploaded_path}")
 
         file_size = os.path.getsize(uploaded_path)
-        print(f"   ✓ File saved successfully ({file_size} bytes)")
+        logger.info(f"File saved: {file_size} bytes")
 
         # 2. Convert to required format (mono, 16kHz) with fallback
         converted_path = uploaded_path
         converted_path_target = os.path.join(temp_dir, TEMP_WAV_FILE)
 
         # Try FFmpeg first
-        print(f"3. Attempting FFmpeg conversion...")
-        print(f"   Input: {uploaded_path}")
-        print(f"   Output: {converted_path_target}")
-
+        logger.info("Converting audio to 16kHz mono WAV format")
         if convert_to_nvidia_format(uploaded_path, converted_path_target):
             converted_path = converted_path_target
-            print(f"   ✓ FFmpeg conversion successful")
+            logger.debug(f"Conversion successful, output: {os.path.getsize(converted_path)} bytes")
         else:
             # FFmpeg failed, attempt transcription with original file
-            print(f"   ⚠ FFmpeg conversion failed. Attempting direct transcription with original file...")
+            logger.warning("FFmpeg conversion failed, attempting transcription with original file")
             # Continue with original file as last resort
 
         if not os.path.exists(converted_path):
             raise RuntimeError(f"Converted audio file not found: {converted_path}")
 
-        converted_size = os.path.getsize(converted_path)
-        print(f"   Converted file size: {converted_size} bytes")
-
         # 3. Run NVIDIA ASR with converted audio
-        print(f"4. Starting NVIDIA ASR transcription...")
-        print(f"   Script path: {TRANSCRIPTION_SCRIPT_PATH}")
-        print(f"   Audio file: {converted_path}")
+        logger.info("Starting NVIDIA ASR transcription")
         transcription_result = run_nvidia_transcription(converted_path)
-        print(f"   Transcription result: {transcription_result[:100]}...")
 
         # 4. Return the result
         if transcription_result.startswith("ASR Error"):
-            print(f"ERROR: {transcription_result}")
+            logger.error(f"Transcription error: {transcription_result}")
             return jsonify({"error": transcription_result}), 500
 
-        print(f"SUCCESS: Transcription completed")
-        print(f"{'='*80}\n")
+        logger.info(f"Transcription completed: {len(transcription_result)} chars")
         return jsonify({"transcription": transcription_result}), 200
 
     except Exception as e:
-        print(f"\n{'='*80}")
-        print(f"EXCEPTION in /transcribe: {type(e).__name__}: {str(e)}")
-        print(f"{'='*80}")
-        import traceback
-        traceback.print_exc()
-        print(f"{'='*80}\n")
+        logger.error(f"Transcribe endpoint error: {type(e).__name__}: {str(e)}", exc_info=True)
         return jsonify({"error": str(e), "type": type(e).__name__}), 500
 
     finally:
         # 5. Clean up the temporary folder and all its contents
-        print(f"5. Cleaning up temporary directory: {temp_dir}")
         if os.path.exists(temp_dir):
             shutil.rmtree(temp_dir)
-            print(f"   ✓ Cleanup complete")
+            logger.debug(f"Cleaned up temporary directory: {temp_dir}")
 
 
 @app.route('/orchestrate', methods=['POST'])
@@ -362,14 +339,14 @@ def orchestrate():
         if not transcript or len(transcript.strip()) == 0:
             return jsonify({"error": "Transcript is empty"}), 400
 
-        print(f"Running orchestrator (auto_execute={auto_execute}, transcript length={len(transcript)})")
+        logger.info(f"Orchestrator workflow started (auto_execute={auto_execute}, transcript length={len(transcript)})")
 
         # Start the workflow in a background thread (non-blocking)
         def run_workflow_background():
             try:
                 result = asyncio.run(run_orchestrator(transcript, auto_execute, event_callback=broadcast_workflow_event))
 
-                print(f"Orchestrator completed: {len(result['planned_actions'])} actions planned")
+                logger.info(f"Workflow completed: {len(result['planned_actions'])} actions planned, {len(result['execution_results'])} results")
 
                 # Broadcast final completion event via SSE
                 completion_event = {
@@ -378,12 +355,10 @@ def orchestrate():
                     "results": result
                 }
                 broadcast_workflow_event(completion_event)
-                print(f"✓ Workflow completion event broadcasted")
+                logger.info("Workflow completion event broadcasted")
 
             except Exception as e:
-                print(f"Orchestrator background error: {e}")
-                import traceback
-                traceback.print_exc()
+                logger.error(f"Workflow error: {type(e).__name__}: {str(e)}", exc_info=True)
 
                 # Broadcast error event via SSE
                 error_event = {
@@ -405,9 +380,7 @@ def orchestrate():
         }), 202
 
     except Exception as e:
-        print(f"Orchestrator request error: {e}")
-        import traceback
-        traceback.print_exc()
+        logger.error(f"Orchestrate endpoint error: {type(e).__name__}: {str(e)}", exc_info=True)
         return jsonify({
             "error": f"Orchestrator request failed: {str(e)}",
             "details": traceback.format_exc()
@@ -415,5 +388,6 @@ def orchestrate():
 
 
 if __name__ == '__main__':
-    print(f"Starting ASR Backend Server on http://0.0.0.0:4000. Ensure ffmpeg is installed and API_KEY is set.")
-    app.run(host='0.0.0.0', port=4000, debug=True, use_reloader=False)
+    logger.info("Starting Flask backend server on http://0.0.0.0:4000")
+    logger.info("Prerequisites: FFmpeg must be installed, API_KEY environment variable must be set")
+    app.run(host='0.0.0.0', port=4000, debug=False, use_reloader=False)
