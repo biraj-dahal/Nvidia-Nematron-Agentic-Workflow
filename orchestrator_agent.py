@@ -31,7 +31,8 @@ def load_attendee_mapping():
             return mapping_data
     except FileNotFoundError:
         # Fallback to hardcoded mapping if file not found
-        print("attendee_mapping.json not found, using hardcoded mapping")
+        # Note: _LOGGER not available during module initialization, using logging directly
+        logging.getLogger(__name__).warning("attendee_mapping.json not found, using hardcoded mapping")
         return {
             "attendees": [
                 {"primary_name": "rahual", "email": "rahual.rai@bison.howard.edu", "aliases": ["Rahual", "rahual rai"]},
@@ -107,8 +108,11 @@ ATTENDEE_MAP = {
 from calender_tool import CalendarAgentTool, CalendarEvent
 from email_tool import GmailAgentTool
 
-_LOGGER = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO)
+# Import custom logging configuration
+from logging_config import configure_logging
+
+# Use custom colored logging
+_LOGGER = configure_logging(__name__, logging.INFO)
 
 # Initialize NVIDIA Nemotron client
 client = OpenAI(
@@ -206,6 +210,7 @@ class ExecutionResult(BaseModel):
 class OrchestratorState(BaseModel):
     """State for the orchestrator agent"""
     audio_transcript: str
+    workflow_id: str = ""  # Unique ID for tracing this request through all workflow steps
     calendar_events: List[CalendarEvent] = []
     related_past_meetings: List[Dict[str, Any]] = []
     planned_actions: List[MeetingAction] = []
@@ -421,7 +426,7 @@ Respond ONLY with valid JSON in exactly this format (no other text):
             }
         })
 
-        _LOGGER.info(f"Raw response from Nemotron:\n{response}\n")
+        _LOGGER.debug(f"Raw response from Nemotron:\n{response}\n")
 
         try:
             # Extract JSON from response
@@ -585,7 +590,7 @@ Which calendar events are related? Return ONLY JSON."""
             }
         })
 
-        _LOGGER.info(f"Raw related meetings response:\n{response}\n")
+        _LOGGER.debug(f"Raw related meetings response:\n{response}\n")
 
         try:
             json_str = self._extract_json(response)
@@ -866,7 +871,7 @@ What actions should be taken? Return ONLY JSON."""
             }
         })
 
-        _LOGGER.info(f"Raw actions response from Nemotron:\n{response}\n")
+        _LOGGER.debug(f"Raw actions response from Nemotron:\n{response}\n")
 
         try:
             json_str = self._extract_json(clean_response)
@@ -1872,7 +1877,18 @@ async def run_orchestrator(transcript: str, auto_execute: bool = True, event_cal
     Returns:
         Dictionary with planned_actions, execution_results, and summary
     """
-    _LOGGER.info(f"Running orchestrator (auto_execute={auto_execute})...")
+    import uuid
+
+    # Generate unique workflow ID for tracing
+    workflow_id = uuid.uuid4().hex[:8]
+
+    # Log workflow start with prominent ID
+    _LOGGER.info("")
+    _LOGGER.info("🔷" * 40)
+    _LOGGER.info(f"WORKFLOW INITIATED - ID: {workflow_id}")
+    _LOGGER.info("🔷" * 40)
+    _LOGGER.info(f"Auto-execute: {auto_execute} | Transcript length: {len(transcript)} chars")
+    _LOGGER.info("")
 
     # Set up the event callback if provided
     if event_callback:
@@ -1881,9 +1897,10 @@ async def run_orchestrator(transcript: str, auto_execute: bool = True, event_cal
     # Create the graph
     graph = create_orchestrator_graph()
 
-    # Initialize state
+    # Initialize state with workflow ID
     initial_state = OrchestratorState(
         audio_transcript=transcript,
+        workflow_id=workflow_id,
         auto_execute=auto_execute
     )
 
@@ -1950,38 +1967,34 @@ async def main():
     # Run the orchestrator
     _LOGGER.info("Starting orchestrator workflow...")
     result = await graph.ainvoke(initial_state)
-    
-    # Print results
-    print("\n" + "="*80)
-    print("ORCHESTRATOR RESULTS")
-    print("="*80)
-    
-    print(f"\nFound {len(result['calendar_events'])} calendar events")
-    print(f"Identified {len(result['related_past_meetings'])} related meetings")
-    print(f"Planned {len(result['planned_actions'])} actions")
-    
-    print("\n--- Planned Actions ---")
+
+    # Log results (using logger instead of print for consistency)
+    from logging_config import log_section_header, log_section_footer
+
+    log_section_header(_LOGGER, "ORCHESTRATOR RESULTS")
+
+    _LOGGER.info(f"Found {len(result['calendar_events'])} calendar events")
+    _LOGGER.info(f"Identified {len(result['related_past_meetings'])} related meetings")
+    _LOGGER.info(f"Planned {len(result['planned_actions'])} actions")
+
+    _LOGGER.info("--- Planned Actions ---")
     for action in result['planned_actions']:
-        print(f"\n{action.action_type}:")
-        print(f"  Reasoning: {action.reasoning}")
+        _LOGGER.info(f"  {action.action_type}: {action.reasoning}")
         if action.event_title:
-            print(f"  Event: {action.event_title}")
-    
-    print("\n--- Execution Results ---")
+            _LOGGER.info(f"    Event: {action.event_title}")
+
+    _LOGGER.info("--- Execution Results ---")
     for result_msg in result['execution_results']:
-        print(f"\n{result_msg}")
-    
-    print("\n--- Final Summary ---")
+        _LOGGER.info(f"  {result_msg}")
+
+    _LOGGER.info("--- Final Summary ---")
     if result.get('messages'):
         last_message = result['messages'][-1]
         # Handle both dict and AIMessage object
-        if isinstance(last_message, dict):
-            print(last_message.get('content', 'No summary available'))
-        else:
-            # It's an AIMessage object
-            print(getattr(last_message, 'content', 'No summary available'))
-    
-    print("\n" + "="*80)
+        summary_text = last_message.get('content', 'No summary available') if isinstance(last_message, dict) else getattr(last_message, 'content', 'No summary available')
+        _LOGGER.info(summary_text)
+
+    log_section_footer(_LOGGER)
 
 
 if __name__ == "__main__":
