@@ -18,13 +18,11 @@ import shutil # Used for file cleanup
 # Import orchestrator for meeting analysis
 from orchestrator_agent import run_orchestrator
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(name)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
-)
-logger = logging.getLogger(__name__)
+# Import custom colored logging
+from logging_config import configure_logging, log_section_header, log_section_footer
+
+# Configure logging with color support
+logger = configure_logging(__name__, logging.INFO)
 
 # --- CONFIGURATION ---
 app = Flask(__name__)
@@ -233,6 +231,7 @@ def transcribe():
     uploaded_path = None
 
     try:
+        log_section_header(logger, "TRANSCRIPTION REQUEST")
         logger.info("Transcribe request received")
 
         if 'audioFile' not in request.files:
@@ -282,6 +281,7 @@ def transcribe():
             return jsonify({"error": transcription_result}), 500
 
         logger.info(f"Transcription completed: {len(transcription_result)} chars")
+        log_section_footer(logger)
         return jsonify({"transcription": transcription_result}), 200
 
     except Exception as e:
@@ -339,14 +339,15 @@ def orchestrate():
         if not transcript or len(transcript.strip()) == 0:
             return jsonify({"error": "Transcript is empty"}), 400
 
-        logger.info(f"Orchestrator workflow started (auto_execute={auto_execute}, transcript length={len(transcript)})")
+        log_section_header(logger, "ORCHESTRATOR WORKFLOW")
+        logger.info(f"Workflow started (auto_execute={auto_execute}, transcript length={len(transcript)})")
 
         # Start the workflow in a background thread (non-blocking)
         def run_workflow_background():
             try:
                 result = asyncio.run(run_orchestrator(transcript, auto_execute, event_callback=broadcast_workflow_event))
 
-                logger.info(f"Workflow completed: {len(result['planned_actions'])} actions planned, {len(result['execution_results'])} results")
+                logger.info(f"Workflow completed: {len(result['planned_actions'])} actions, {len(result['execution_results'])} results")
 
                 # Broadcast final completion event via SSE
                 completion_event = {
@@ -356,6 +357,7 @@ def orchestrate():
                 }
                 broadcast_workflow_event(completion_event)
                 logger.info("Workflow completion event broadcasted")
+                log_section_footer(logger)
 
             except Exception as e:
                 logger.error(f"Workflow error: {type(e).__name__}: {str(e)}", exc_info=True)
