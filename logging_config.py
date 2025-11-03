@@ -98,6 +98,10 @@ def configure_logging(name: str = None, log_level: int = logging.INFO):
     # Remove existing handlers to avoid duplicates
     logger.handlers.clear()
 
+    # CRITICAL: Prevent propagation to root logger (Gunicorn)
+    # This stops duplicate logs from appearing with different formatters
+    logger.propagate = False
+
     # Console handler with colors
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(log_level)
@@ -115,13 +119,13 @@ def log_section_header(logger, message: str):
         logger: Logger instance
         message: Header message
     """
-    separator = "─" * 72
+    separator = "=" * 70
     logger.info(separator)
-    logger.info(message)
+    logger.info(f"  {message}")
     logger.info(separator)
 
 
 def log_section_footer(logger):
     """Log a formatted section footer separator."""
-    separator = "─" * 72
+    separator = "=" * 70
     logger.info(separator)

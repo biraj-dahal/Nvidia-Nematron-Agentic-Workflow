@@ -35,6 +35,7 @@ COPY --from=builder /root/.local /root/.local
 # Copy application files
 COPY server.py .
 COPY orchestrator_agent.py .
+COPY logging_config.py .
 COPY calender_tool.py .
 COPY email_tool.py .
 COPY attendee_mapping.json .
