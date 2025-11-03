@@ -80,6 +80,8 @@ const AppContent: React.FC = () => {
     result: orchestratorResult,
     transcribeAudio,
     runOrchestrator,
+    setResultFromSSE,
+    setErrorFromSSE,
   } = useOrchestrator();
 
   // Callback for workflow stream events
@@ -87,9 +89,32 @@ const AppContent: React.FC = () => {
   // to be recreated every time state changes, which resets the EventSource connection
   const onWorkflowEvent = useCallback((event: any) => {
     console.log('📡 [App] Received SSE event:', event.type, event.agent || 'N/A');
+
+    // Handle workflow completion event (from immediate response pattern)
+    if (event.type === 'workflow_complete') {
+      console.log('✅ [App] Workflow completed via SSE, setting results...');
+      setResultFromSSE(event.results);
+      setStatusMessage('Workflow completed successfully!');
+      setShowResults(true);
+      // Close stream after completion
+      setTimeout(() => {
+        stopStream();
+      }, 1000);
+      return;
+    }
+
+    // Handle workflow error event
+    if (event.type === 'workflow_error') {
+      console.log('❌ [App] Workflow error via SSE:', event.error);
+      setErrorFromSSE(event.error);
+      stopStream();
+      return;
+    }
+
+    // Handle regular workflow events (stage_start, stage_complete, etc.)
     handleWorkflowEvent(event);
     console.log('📡 [App] handleWorkflowEvent called');
-  }, [handleWorkflowEvent]);
+  }, [handleWorkflowEvent, setResultFromSSE, setErrorFromSSE, stopStream]);
 
   const { startStream, closeStream: stopStream } = useWorkflowStream(onWorkflowEvent);
 
@@ -187,7 +212,13 @@ const AppContent: React.FC = () => {
 
           const result = await runOrchestrator(transcriptionText, autoExecute);
 
+          // With the new 202 Accepted pattern:
+          // - result will be null (workflow runs in background)
+          // - Results will arrive via SSE event (workflow_complete)
+          // - Don't need to do anything here, just wait for SSE
+
           if (result) {
+            // Legacy 200 OK response (has results immediately)
             setStatusMessage('Workflow completed successfully!');
             setShowResults(true);
 
@@ -195,6 +226,10 @@ const AppContent: React.FC = () => {
             setTimeout(() => {
               stopStream();
             }, 1000);
+          } else {
+            // 202 Accepted response (workflow started, waiting for SSE)
+            setStatusMessage('Workflow started. Processing in background...');
+            // Results will be set when workflow_complete event arrives via SSE
           }
 
         } catch (err) {

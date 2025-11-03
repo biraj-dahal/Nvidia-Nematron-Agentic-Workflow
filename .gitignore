@@ -44,3 +44,4 @@ token.json
 # Logs
 *.log
 logs/
+token.pickle

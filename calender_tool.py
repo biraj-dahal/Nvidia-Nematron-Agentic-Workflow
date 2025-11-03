@@ -449,4 +449,6 @@ def main():
     print("Demo complete!")
     print("=" * 80)
 
-main()
+
+if __name__ == "__main__":
+    main()

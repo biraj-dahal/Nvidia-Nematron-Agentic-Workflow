@@ -28,9 +28,9 @@ export const useWorkflowStream = (
       console.log('🔌 [useWorkflowStream] Opening EventSource to /stream-workflow...');
       console.log('🔌 [useWorkflowStream] Current origin:', window.location.origin);
 
-      // Use explicit backend URL instead of relative path (proxy doesn't work with EventSource)
-      const backendUrl = 'http://localhost:4000/stream-workflow';
-      console.log('🔌 [useWorkflowStream] Connecting to backend directly:', backendUrl);
+      // Use relative path so it routes through nginx proxy properly
+      const backendUrl = '/stream-workflow';
+      console.log('🔌 [useWorkflowStream] Connecting to backend via proxy:', backendUrl);
       const eventSource = new EventSource(backendUrl);
 
       // Flag to track if we've received first message (which indicates connection is working)
